@@ -51,6 +51,7 @@ function planStatusPill(progress: { missing: boolean; isComplete: boolean }): st
 
 function mainStatusPill(status: string): string {
   if (status === "running_tool") return "running tool"
+  if (status === "thinking") return "thinking"
   if (status === "busy") return "busy"
   if (status === "idle") return "idle"
   return "unknown"

@@ -88,7 +88,7 @@ function formatTime(ts: number | null): string {
 function statusTone(status: string): "teal" | "sand" | "red" {
   const s = status.toLowerCase();
   if (s.includes("error") || s.includes("fail")) return "red";
-  if (s.includes("run") || s.includes("progress") || s.includes("busy")) return "teal";
+  if (s.includes("run") || s.includes("progress") || s.includes("busy") || s.includes("think")) return "teal";
   return "sand";
 }
 

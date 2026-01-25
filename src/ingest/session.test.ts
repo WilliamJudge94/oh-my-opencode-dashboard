@@ -184,4 +184,37 @@ describe("getMainSessionView", () => {
     expect(view.status).toBe("running_tool")
     expect(view.currentTool).toBe("grep")
   })
+
+  it("derives thinking state when latest assistant message is not completed", () => {
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const projectRoot = "/tmp/project"
+    const sessionId = "ses_1"
+
+    const messageDir = path.join(storage.message, sessionId)
+    fs.mkdirSync(messageDir, { recursive: true })
+
+    const messageID = "msg_1"
+    fs.writeFileSync(
+      path.join(messageDir, `${messageID}.json`),
+      JSON.stringify({
+        id: messageID,
+        sessionID: sessionId,
+        role: "assistant",
+        agent: "sisyphus",
+        time: { created: 1000 },
+      }),
+      "utf8"
+    )
+
+    const view = getMainSessionView({
+      projectRoot,
+      sessionId,
+      storage,
+      sessionMeta: null,
+      nowMs: 50_000,
+    })
+
+    expect(view.status).toBe("thinking")
+  })
 })

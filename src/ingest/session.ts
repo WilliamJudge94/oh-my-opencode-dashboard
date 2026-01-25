@@ -34,7 +34,7 @@ export type MainSessionView = {
   currentTool: string | null
   lastUpdated: number | null
   sessionLabel: string
-  status: "busy" | "idle" | "unknown" | "running_tool"
+  status: "busy" | "idle" | "unknown" | "running_tool" | "thinking"
 }
 
 export type OpenCodeStorageRoots = {
@@ -251,6 +251,8 @@ export function getMainSessionView(opts: {
   let status: MainSessionView["status"] = "unknown"
   if (activeTool?.status === "pending" || activeTool?.status === "running") {
     status = "running_tool"
+  } else if (recent?.role === "assistant" && typeof recent?.time?.created === "number" && typeof recent?.time?.completed !== "number") {
+    status = "thinking"
   } else if (typeof lastUpdated === "number") {
     // Use freshness window fallback exactly as today ONLY when no active tool is found
     status = nowMs - lastUpdated <= 15_000 ? "busy" : "idle"
