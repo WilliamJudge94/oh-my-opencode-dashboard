@@ -17,13 +17,13 @@ Local-only, read-only dashboard for viewing OhMyOpenCode agent progress.
 Run without installing globally:
 
 ```bash
-bunx -p @oh-my-opencode-dashboard/dashboard oh-my-opencode-dashboard -- --project /absolute/path/to/your/project
+bunx -p oh-my-opencode-dashboard oh-my-opencode-dashboard -- --project /absolute/path/to/your/project
 ```
 
 Or install globally:
 
 ```bash
-bun add -g @oh-my-opencode-dashboard/dashboard
+bun add -g oh-my-opencode-dashboard
 ```
 
 Then:
