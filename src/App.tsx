@@ -14,10 +14,28 @@ type BackgroundTask = {
   subline?: string;
   agent: string;
   lastModel: string;
+  sessionId?: string | null;
   status: "queued" | "running" | "done" | "error" | "cancelled" | string;
   toolCalls: number;
   lastTool: string;
   timeline: string;
+};
+
+type ToolCallSummary = {
+  sessionId?: string;
+  messageId: string;
+  callId: string;
+  tool: string;
+  status: string;
+  createdAtMs: number | null;
+};
+
+type ToolCallsResponse = {
+  ok: boolean;
+  sessionId: string;
+  toolCalls: ToolCallSummary[];
+  caps?: { maxMessages: number; maxToolCalls: number };
+  truncated?: boolean;
 };
 
 type TimeSeriesTone = "muted" | "teal" | "red" | "green";
@@ -198,6 +216,7 @@ const FALLBACK_DATA: DashboardPayload = {
       subline: "task-1",
       agent: "explore",
       lastModel: "opencode/gpt-5-nano",
+      sessionId: null,
       status: "running",
       toolCalls: 3,
       lastTool: "grep",
@@ -282,12 +301,112 @@ function toNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function toToolCallSummary(value: unknown): ToolCallSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+
+  const messageId = toNonEmptyString(rec.messageId ?? rec.message_id);
+  const callId = toNonEmptyString(rec.callId ?? rec.call_id);
+  const tool = toNonEmptyString(rec.tool);
+  const status = toNonEmptyString(rec.status) ?? "unknown";
+  const createdAtRaw = toFiniteNumber(rec.createdAtMs ?? rec.created_at_ms ?? rec.createdAt ?? rec.created_at);
+
+  if (!messageId || !callId || !tool) return null;
+
+  return {
+    sessionId: toNonEmptyString(rec.sessionId ?? rec.session_id) ?? undefined,
+    messageId,
+    callId,
+    tool,
+    status,
+    createdAtMs: typeof createdAtRaw === "number" ? Math.floor(createdAtRaw) : null,
+  };
+}
+
+function toToolCallsResponse(value: unknown): ToolCallsResponse | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+
+  const ok = typeof rec.ok === "boolean" ? rec.ok : false;
+  const sessionId = toNonEmptyString(rec.sessionId ?? rec.session_id);
+  const toolCallsRaw = rec.toolCalls ?? rec.tool_calls;
+
+  if (!sessionId || !Array.isArray(toolCallsRaw)) return null;
+
+  const toolCalls: ToolCallSummary[] = toolCallsRaw
+    .map(toToolCallSummary)
+    .filter((t): t is ToolCallSummary => t !== null);
+
+  const capsRaw = rec.caps;
+  const capsObj = capsRaw && typeof capsRaw === "object" ? (capsRaw as Record<string, unknown>) : null;
+  const maxMessagesRaw = capsObj ? toFiniteNumber(capsObj.maxMessages ?? capsObj.max_messages) : null;
+  const maxToolCallsRaw = capsObj ? toFiniteNumber(capsObj.maxToolCalls ?? capsObj.max_tool_calls) : null;
+  const caps =
+    typeof maxMessagesRaw === "number" && typeof maxToolCallsRaw === "number"
+      ? { maxMessages: Math.max(0, Math.floor(maxMessagesRaw)), maxToolCalls: Math.max(0, Math.floor(maxToolCallsRaw)) }
+      : undefined;
+
+  const truncated = typeof rec.truncated === "boolean" ? rec.truncated : undefined;
+
+  return {
+    ok,
+    sessionId,
+    toolCalls,
+    caps,
+    truncated,
+  };
+}
+
 export function formatBackgroundTaskTimelineCell(status: unknown, timeline: unknown): string {
   const s = typeof status === "string" ? status.trim().toLowerCase() : "";
   if (s === "unknown") return "";
   if (s === "queued") return "-";
 
   return toNonEmptyString(timeline) ?? "-";
+}
+
+export function computeToolCallsFetchPlan(params: {
+  sessionId: string | null;
+  status: string;
+  cachedState: "idle" | "loading" | "ok" | "error" | null;
+  cachedDataOk: boolean;
+  isExpanded: boolean;
+}): { shouldFetch: boolean; force: boolean } {
+  const { sessionId, status, cachedState, cachedDataOk, isExpanded } = params;
+  
+  if (!sessionId) {
+    return { shouldFetch: false, force: false };
+  }
+  
+  if (!isExpanded) {
+    return { shouldFetch: false, force: false };
+  }
+  
+  const isRunning = String(status ?? "").toLowerCase().trim() === "running";
+  
+  if (isRunning) {
+    return { shouldFetch: true, force: true };
+  }
+  
+  if (cachedDataOk) {
+    return { shouldFetch: false, force: false };
+  }
+  
+  if (cachedState === "loading") {
+    return { shouldFetch: false, force: false };
+  }
+  
+  return { shouldFetch: true, force: false };
+}
+
+export function toggleIdInSet(id: string, currentSet: Set<string>): Set<string> {
+  const next = new Set(currentSet);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  return next;
 }
 
 function toDashboardPayload(json: unknown): DashboardPayload {
@@ -331,6 +450,7 @@ function toDashboardPayload(json: unknown): DashboardPayload {
                 : undefined,
           agent: String(rec.agent ?? rec.worker ?? "unknown"),
           lastModel: toNonEmptyString(rec.lastModel ?? rec.last_model) ?? "-",
+          sessionId: toNonEmptyString(rec.sessionId ?? rec.session_id),
           status: String(rec.status ?? "queued"),
           toolCalls: Number(rec.toolCalls ?? rec.tool_calls ?? 0) || 0,
           lastTool: String(rec.lastTool ?? rec.last_tool ?? "-") || "-",
@@ -378,6 +498,12 @@ export default function App() {
   const [soundUnlocked, setSoundUnlocked] = React.useState(false);
   const [planOpen, setPlanOpen] = React.useState(false);
   const [errorHint, setErrorHint] = React.useState<string | null>(null);
+
+  const [expandedBgTaskIds, setExpandedBgTaskIds] = React.useState<Set<string>>(() => new Set());
+  const [toolCallsBySession, setToolCallsBySession] = React.useState<
+    Map<string, { state: "idle" | "loading" | "ok" | "error"; data: ToolCallsResponse | null; lastFetchedAtMs: number | null }>
+  >(() => new Map());
+  const toolCallsSeqRef = React.useRef<Map<string, number>>(new Map());
 
   const timerRef = React.useRef<number | null>(null);
   const hadSuccessRef = React.useRef(false);
@@ -579,6 +705,75 @@ export default function App() {
     }
     return map;
   }, [data.timeSeries.series]);
+
+  async function fetchToolCalls(sessionId: string, opts: { force: boolean }) {
+    const existing = toolCallsBySession.get(sessionId);
+    if (!opts.force && existing?.data?.ok) return;
+
+    const seq = (toolCallsSeqRef.current.get(sessionId) ?? 0) + 1;
+    toolCallsSeqRef.current.set(sessionId, seq);
+
+    setToolCallsBySession((prev) => {
+      const next = new Map(prev);
+      const prior = next.get(sessionId);
+      next.set(sessionId, {
+        state: "loading",
+        data: prior?.data ?? null,
+        lastFetchedAtMs: prior?.lastFetchedAtMs ?? null,
+      });
+      return next;
+    });
+
+    try {
+      const raw = await safeFetchJson(`/api/tool-calls/${encodeURIComponent(sessionId)}`);
+      const parsed = toToolCallsResponse(raw);
+      if (!parsed?.ok) throw new Error("tool calls not ok");
+      if (toolCallsSeqRef.current.get(sessionId) !== seq) return;
+      setToolCallsBySession((prev) => {
+        const next = new Map(prev);
+        next.set(sessionId, { state: "ok", data: parsed, lastFetchedAtMs: Date.now() });
+        return next;
+      });
+    } catch {
+      if (toolCallsSeqRef.current.get(sessionId) !== seq) return;
+      setToolCallsBySession((prev) => {
+        const next = new Map(prev);
+        const prior = next.get(sessionId);
+        next.set(sessionId, {
+          state: "error",
+          data: prior?.data ?? null,
+          lastFetchedAtMs: prior?.lastFetchedAtMs ?? null,
+        });
+        return next;
+      });
+    }
+  }
+
+  function toggleBackgroundTaskExpanded(t: BackgroundTask) {
+    const nextExpanded = !expandedBgTaskIds.has(t.id);
+    setExpandedBgTaskIds((prev) => {
+      const next = new Set(prev);
+      if (nextExpanded) next.add(t.id);
+      else next.delete(t.id);
+      return next;
+    });
+
+    if (!nextExpanded) return;
+
+    const sessionId = toNonEmptyString(t.sessionId);
+    if (!sessionId) return;
+
+    const isRunning = String(t.status ?? "").toLowerCase().trim() === "running";
+    const cached = toolCallsBySession.get(sessionId);
+    if (isRunning) {
+      void fetchToolCalls(sessionId, { force: true });
+      return;
+    }
+
+    if (cached?.data?.ok) return;
+    if (cached?.state === "loading") return;
+    void fetchToolCalls(sessionId, { force: false });
+  }
 
   const buckets = Math.max(1, data.timeSeries.buckets);
   const bucketMs = Math.max(1, data.timeSeries.bucketMs);
@@ -931,22 +1126,102 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.backgroundTasks.map((t) => (
-                    <tr key={t.id}>
-                      <td>
-                        <div className="taskTitle">{t.description}</div>
-                        {t.subline ? <div className="taskSub mono">{t.subline}</div> : null}
-                      </td>
-                      <td className="mono">{t.agent}</td>
-                      <td className="mono">{t.lastModel}</td>
-                      <td>
-                        <span className={`pill pill-${statusTone(t.status)}`}>{t.status}</span>
-                      </td>
-                      <td className="mono">{t.toolCalls}</td>
-                      <td className="mono">{t.lastTool}</td>
-                      <td className="mono muted">{formatBackgroundTaskTimelineCell(t.status, t.timeline)}</td>
-                    </tr>
-                  ))}
+                  {data.backgroundTasks.map((t) => {
+                    const expanded = expandedBgTaskIds.has(t.id);
+                    const sessionId = toNonEmptyString(t.sessionId);
+                    const detailId = `bg-toolcalls-${t.id}`;
+                    const entry = sessionId ? toolCallsBySession.get(sessionId) : null;
+                    const toolCalls = entry?.data?.ok ? entry.data.toolCalls : [];
+                    const showCapped = Boolean(entry?.data?.truncated);
+                    const caps = entry?.data?.caps;
+                    const showLoading = entry?.state === "loading";
+                    const showError = entry?.state === "error" && !entry?.data?.ok;
+                    const empty = sessionId ? toolCalls.length === 0 && !showLoading && !showError : true;
+
+                    return (
+                      <React.Fragment key={t.id}>
+                        <tr>
+                          <td>
+                            <div className="bgTaskRowTitleWrap">
+                              <button
+                                type="button"
+                                className="bgTaskToggle"
+                                onClick={() => toggleBackgroundTaskExpanded(t)}
+                                aria-expanded={expanded}
+                                aria-controls={detailId}
+                                title={expanded ? "Collapse" : "Expand"}
+                                aria-label={expanded ? "Collapse tool calls" : "Expand tool calls"}
+                              />
+                              <div className="bgTaskRowTitleText">
+                                <div className="taskTitle">{t.description}</div>
+                                {t.subline ? <div className="taskSub mono">{t.subline}</div> : null}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="mono">{t.agent}</td>
+                          <td className="mono">{t.lastModel}</td>
+                          <td>
+                            <span className={`pill pill-${statusTone(t.status)}`}>{t.status}</span>
+                          </td>
+                          <td className="mono">{t.toolCalls}</td>
+                          <td className="mono">{t.lastTool}</td>
+                          <td className="mono muted">{formatBackgroundTaskTimelineCell(t.status, t.timeline)}</td>
+                        </tr>
+
+                        {expanded ? (
+                          <tr>
+                            <td colSpan={7} className="bgTaskDetailCell">
+                              <section id={detailId} aria-label="Tool calls" className="bgTaskDetail">
+                                <div className="mono muted bgTaskDetailHeader">
+                                  Tool calls (metadata only){showLoading && toolCalls.length > 0 ? " - refreshing" : ""}
+                                  {showCapped
+                                    ? ` - capped${caps ? ` (max ${caps.maxMessages} messages / ${caps.maxToolCalls} tool calls)` : ""}`
+                                    : ""}
+                                </div>
+
+                                {!sessionId ? (
+                                  <div className="muted bgTaskDetailEmpty">
+                                    No session id available for this task.
+                                  </div>
+                                ) : showError ? (
+                                  <div className="muted bgTaskDetailEmpty">
+                                    Tool calls unavailable.
+                                  </div>
+                                ) : showLoading && toolCalls.length === 0 ? (
+                                  <div className="muted bgTaskDetailEmpty">
+                                    Loading tool calls...
+                                  </div>
+                                ) : empty ? (
+                                  <div className="muted bgTaskDetailEmpty">
+                                    No tool calls recorded.
+                                  </div>
+                                ) : (
+                                  <div className="bgTaskToolCallsGrid">
+                                    {toolCalls.map((c) => (
+                                      <div key={c.callId} className="bgTaskToolCall">
+                                        <div className="bgTaskToolCallRow">
+                                          <div className="mono bgTaskToolCallTool" title={c.tool}>
+                                            {c.tool}
+                                          </div>
+                                          <div className="mono muted bgTaskToolCallStatus" title={c.status}>
+                                            {c.status}
+                                          </div>
+                                        </div>
+                                        <div className="mono muted bgTaskToolCallTime">{formatTime(c.createdAtMs)}</div>
+                                        <div className="mono muted bgTaskToolCallId" title={c.callId}>
+                                          {c.callId}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </section>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

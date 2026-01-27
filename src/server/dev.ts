@@ -26,14 +26,16 @@ const resolvedProjectPath = projectPath ?? process.cwd()
 
 const app = new Hono()
 
+const storageRoot = getOpenCodeStorageDir()
+
 const store = createDashboardStore({
   projectRoot: resolvedProjectPath,
-  storageRoot: getOpenCodeStorageDir(),
+  storageRoot,
   watch: true,
   pollIntervalMs: 2000,
 })
 
-app.route("/api", createApi(store))
+app.route("/api", createApi({ store, storageRoot }))
 
 Bun.serve({
   fetch: app.fetch,

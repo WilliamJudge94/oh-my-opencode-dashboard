@@ -981,7 +981,16 @@ describe("deriveBackgroundTasks", () => {
       "utf8"
     )
 
-    const readdirSync = vi.fn(fs.readdirSync)
+    // Create typed wrapper that records calls and delegates to fs.readdirSync
+    const readdirCalls: Array<[fs.PathLike]> = []
+    const readdirSync = ((path: fs.PathLike, options?: any): any => {
+      if (typeof options === 'object' && options.withFileTypes) {
+        return fs.readdirSync(path, options)
+      }
+      readdirCalls.push([path])
+      return fs.readdirSync(path, 'utf8')
+    }) as typeof fs.readdirSync
+    
     const fsLike = {
       readFileSync: fs.readFileSync,
       readdirSync,
@@ -993,7 +1002,7 @@ describe("deriveBackgroundTasks", () => {
     const rows = deriveBackgroundTasks({ storage, mainSessionId, fs: fsLike })
 
     // #then
-    const backgroundReads = readdirSync.mock.calls.filter((call) => call[0] === childMsgDir)
+    const backgroundReads = readdirCalls.filter((call) => call[0] === childMsgDir)
     expect(rows.length).toBe(2)
     expect(backgroundReads.length).toBe(1)
   })

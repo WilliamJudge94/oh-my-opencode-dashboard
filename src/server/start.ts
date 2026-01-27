@@ -21,14 +21,16 @@ const port = parseInt(values.port || '51234')
 
 const app = new Hono()
 
+const storageRoot = getOpenCodeStorageDir()
+
 const store = createDashboardStore({
   projectRoot: project,
-  storageRoot: getOpenCodeStorageDir(),
+  storageRoot,
   watch: true,
   pollIntervalMs: 2000,
 })
 
-app.route('/api', createApi(store))
+app.route('/api', createApi({ store, storageRoot }))
 
 const distRoot = join(import.meta.dir, '../../dist')
 

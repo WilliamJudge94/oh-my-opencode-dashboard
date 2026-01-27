@@ -31,6 +31,7 @@ export type DashboardPayload = {
     toolCalls: number
     lastTool: string
     timeline: string
+    sessionId: string | null
   }>
   timeSeries: TimeSeriesPayload
   raw: unknown
@@ -161,6 +162,7 @@ export function buildDashboardPayload(opts: {
       toolCalls: t.toolCalls ?? 0,
       lastTool: t.lastTool ?? "-",
       timeline: typeof t.timeline === "string" ? t.timeline : "",
+      sessionId: t.sessionId ?? null,
     })),
     timeSeries,
     raw: null,

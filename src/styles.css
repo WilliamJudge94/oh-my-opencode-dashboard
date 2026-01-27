@@ -349,6 +349,133 @@ body {
   color: rgba(31, 36, 38, 0.62);
 }
 
+.bgTaskRowTitleWrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.bgTaskRowTitleText {
+  min-width: 0;
+}
+
+.bgTaskToggle {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 10px;
+  border: 1px solid rgba(31, 36, 38, 0.16);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 6px 14px rgba(29, 32, 33, 0.06);
+  color: rgba(31, 36, 38, 0.72);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.bgTaskToggle::before {
+  content: "\25B8";
+  font-size: 12px;
+  line-height: 1;
+  transform: translateX(0.5px);
+}
+
+.bgTaskToggle:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(31, 36, 38, 0.20);
+}
+
+.bgTaskToggle:active {
+  transform: translateY(0px);
+}
+
+.bgTaskToggle:focus-visible {
+  outline: 2px solid rgba(15, 90, 81, 0.30);
+  outline-offset: 2px;
+}
+
+.bgTaskToggle[aria-expanded="true"] {
+  background: rgba(15, 90, 81, 0.10);
+  border-color: rgba(15, 90, 81, 0.22);
+  color: var(--teal-ink);
+}
+
+.bgTaskToggle[aria-expanded="true"]::before {
+  content: "\25BE";
+  transform: translateY(-0.5px);
+}
+
+.table td.bgTaskDetailCell {
+  padding: 0 10px 14px;
+}
+
+.bgTaskDetail {
+  padding: 12px 12px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(31, 36, 38, 0.08);
+  background: rgba(255, 255, 255, 0.54);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 10px 22px rgba(29, 32, 33, 0.05);
+  backdrop-filter: blur(8px);
+}
+
+.bgTaskDetailHeader {
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.bgTaskDetailEmpty {
+  font-size: 13px;
+}
+
+.bgTaskToolCallsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.bgTaskToolCall {
+  border-radius: 14px;
+  border: 1px solid rgba(31, 36, 38, 0.10);
+  background:
+    radial-gradient(120px 50px at 12% 18%, rgba(15, 90, 81, 0.06), transparent 70%),
+    rgba(255, 255, 255, 0.64);
+  padding: 10px 11px;
+}
+
+.bgTaskToolCallRow {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) max-content;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.bgTaskToolCallTool,
+.bgTaskToolCallStatus,
+.bgTaskToolCallId {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgTaskToolCallTime {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.bgTaskToolCallId {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.78;
+}
+
 .details {
   border-radius: var(--radius);
   border: 1px solid rgba(31, 36, 38, 0.12);
@@ -654,5 +781,9 @@ body {
   .footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .bgTaskToolCallsGrid {
+    grid-template-columns: 1fr;
   }
 }
