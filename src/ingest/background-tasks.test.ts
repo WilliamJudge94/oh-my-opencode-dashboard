@@ -1,7 +1,7 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { deriveBackgroundTasks } from "./background-tasks"
 import { getStorageRoots } from "./session"
 
@@ -703,5 +703,289 @@ describe("deriveBackgroundTasks", () => {
     expect((rows[0] as unknown as Record<string, unknown>).prompt).toBeUndefined()
     expect((rows[0] as unknown as Record<string, unknown>).input).toBeUndefined()
     expect((rows[0] as unknown as Record<string, unknown>).state).toBeUndefined()
+  })
+
+  it("derives lastModel from background session assistant metas", () => {
+    // #given
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const mainSessionId = "ses_main"
+
+    const msgDir = path.join(storage.message, mainSessionId)
+    fs.mkdirSync(msgDir, { recursive: true })
+    const messageID = "msg_1"
+    fs.writeFileSync(
+      path.join(msgDir, `${messageID}.json`),
+      JSON.stringify({
+        id: messageID,
+        sessionID: mainSessionId,
+        role: "assistant",
+        time: { created: 1000 },
+      }),
+      "utf8"
+    )
+    const partDir = path.join(storage.part, messageID)
+    fs.mkdirSync(partDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(partDir, "part_1.json"),
+      JSON.stringify({
+        id: "part_1",
+        sessionID: mainSessionId,
+        messageID,
+        type: "tool",
+        callID: "call_1",
+        tool: "delegate_task",
+        state: {
+          status: "completed",
+          input: {
+            run_in_background: true,
+            description: "Model scan",
+            subagent_type: "explore",
+          },
+        },
+      }),
+      "utf8"
+    )
+
+    const projectID = "proj"
+    const sessDir = path.join(storage.session, projectID)
+    fs.mkdirSync(sessDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(sessDir, "ses_child.json"),
+      JSON.stringify({
+        id: "ses_child",
+        projectID,
+        directory: "/tmp/project",
+        title: "Background: Model scan",
+        parentID: mainSessionId,
+        time: { created: 1500, updated: 1500 },
+      }),
+      "utf8"
+    )
+
+    const childMsgDir = path.join(storage.message, "ses_child")
+    fs.mkdirSync(childMsgDir, { recursive: true })
+    const childMsgId = "msg_child"
+    fs.writeFileSync(
+      path.join(childMsgDir, `${childMsgId}.json`),
+      JSON.stringify({
+        id: childMsgId,
+        sessionID: "ses_child",
+        role: "assistant",
+        time: { created: 2000 },
+        providerID: "openai",
+        modelID: "gpt-5.2",
+      }),
+      "utf8"
+    )
+
+    // #when
+    const rows = deriveBackgroundTasks({ storage, mainSessionId })
+
+    // #then
+    expect(rows.length).toBe(1)
+    expect(rows[0].lastModel).toBe("openai/gpt-5.2")
+  })
+
+  it("orders lastModel by time.created over file mtime", () => {
+    // #given
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const mainSessionId = "ses_main"
+
+    const msgDir = path.join(storage.message, mainSessionId)
+    fs.mkdirSync(msgDir, { recursive: true })
+    const messageID = "msg_1"
+    fs.writeFileSync(
+      path.join(msgDir, `${messageID}.json`),
+      JSON.stringify({
+        id: messageID,
+        sessionID: mainSessionId,
+        role: "assistant",
+        time: { created: 1000 },
+      }),
+      "utf8"
+    )
+    const partDir = path.join(storage.part, messageID)
+    fs.mkdirSync(partDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(partDir, "part_1.json"),
+      JSON.stringify({
+        id: "part_1",
+        sessionID: mainSessionId,
+        messageID,
+        type: "tool",
+        callID: "call_1",
+        tool: "delegate_task",
+        state: {
+          status: "completed",
+          input: {
+            run_in_background: true,
+            description: "Ordering scan",
+            subagent_type: "explore",
+          },
+        },
+      }),
+      "utf8"
+    )
+
+    const projectID = "proj"
+    const sessDir = path.join(storage.session, projectID)
+    fs.mkdirSync(sessDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(sessDir, "ses_child.json"),
+      JSON.stringify({
+        id: "ses_child",
+        projectID,
+        directory: "/tmp/project",
+        title: "Background: Ordering scan",
+        parentID: mainSessionId,
+        time: { created: 1500, updated: 1500 },
+      }),
+      "utf8"
+    )
+
+    const childMsgDir = path.join(storage.message, "ses_child")
+    fs.mkdirSync(childMsgDir, { recursive: true })
+    const olderMsgId = "msg_older"
+    const newerMsgId = "msg_newer"
+
+    fs.writeFileSync(
+      path.join(childMsgDir, `${newerMsgId}.json`),
+      JSON.stringify({
+        id: newerMsgId,
+        sessionID: "ses_child",
+        role: "assistant",
+        time: { created: 3000 },
+        providerID: "openai",
+        modelID: "gpt-newer",
+      }),
+      "utf8"
+    )
+    fs.writeFileSync(
+      path.join(childMsgDir, `${olderMsgId}.json`),
+      JSON.stringify({
+        id: olderMsgId,
+        sessionID: "ses_child",
+        role: "assistant",
+        time: { created: 1000 },
+        providerID: "openai",
+        modelID: "gpt-older",
+      }),
+      "utf8"
+    )
+
+    // #when
+    const rows = deriveBackgroundTasks({ storage, mainSessionId })
+
+    // #then
+    expect(rows.length).toBe(1)
+    expect(rows[0].lastModel).toBe("openai/gpt-newer")
+  })
+
+  it("memoizes background session reads for shared sessionId", () => {
+    // #given
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const mainSessionId = "ses_main"
+
+    const msgDir = path.join(storage.message, mainSessionId)
+    fs.mkdirSync(msgDir, { recursive: true })
+    const messageID = "msg_1"
+    fs.writeFileSync(
+      path.join(msgDir, `${messageID}.json`),
+      JSON.stringify({
+        id: messageID,
+        sessionID: mainSessionId,
+        role: "assistant",
+        time: { created: 1000 },
+      }),
+      "utf8"
+    )
+    const partDir = path.join(storage.part, messageID)
+    fs.mkdirSync(partDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(partDir, "part_1.json"),
+      JSON.stringify({
+        id: "part_1",
+        sessionID: mainSessionId,
+        messageID,
+        type: "tool",
+        callID: "call_1",
+        tool: "delegate_task",
+        state: {
+          status: "completed",
+          input: {
+            run_in_background: true,
+            description: "Memo scan",
+            subagent_type: "explore",
+          },
+        },
+      }),
+      "utf8"
+    )
+    fs.writeFileSync(
+      path.join(partDir, "part_2.json"),
+      JSON.stringify({
+        id: "part_2",
+        sessionID: mainSessionId,
+        messageID,
+        type: "tool",
+        callID: "call_2",
+        tool: "delegate_task",
+        state: {
+          status: "completed",
+          input: {
+            run_in_background: true,
+            description: "Memo scan",
+            subagent_type: "explore",
+          },
+        },
+      }),
+      "utf8"
+    )
+
+    const projectID = "proj"
+    const sessDir = path.join(storage.session, projectID)
+    fs.mkdirSync(sessDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(sessDir, "ses_child.json"),
+      JSON.stringify({
+        id: "ses_child",
+        projectID,
+        directory: "/tmp/project",
+        title: "Background: Memo scan",
+        parentID: mainSessionId,
+        time: { created: 1500, updated: 1500 },
+      }),
+      "utf8"
+    )
+
+    const childMsgDir = path.join(storage.message, "ses_child")
+    fs.mkdirSync(childMsgDir, { recursive: true })
+    const childMsgId = "msg_child"
+    fs.writeFileSync(
+      path.join(childMsgDir, `${childMsgId}.json`),
+      JSON.stringify({
+        id: childMsgId,
+        sessionID: "ses_child",
+        role: "assistant",
+        time: { created: 2000 },
+        providerID: "openai",
+        modelID: "gpt-5.2",
+      }),
+      "utf8"
+    )
+
+    const readdirSpy = vi.spyOn(fs, "readdirSync")
+
+    // #when
+    const rows = deriveBackgroundTasks({ storage, mainSessionId })
+
+    // #then
+    const backgroundReads = readdirSpy.mock.calls.filter((call) => call[0] === childMsgDir)
+    expect(rows.length).toBe(2)
+    expect(backgroundReads.length).toBe(1)
+    readdirSpy.mockRestore()
   })
 })

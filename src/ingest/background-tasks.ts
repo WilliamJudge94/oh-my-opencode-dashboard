@@ -2,6 +2,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import type { OpenCodeStorageRoots, SessionMetadata, StoredMessageMeta, StoredToolPart } from "./session"
 import { getMessageDir } from "./session"
+import { pickLatestModelString } from "./model"
 
 export type BackgroundTaskRow = {
   id: string
@@ -10,6 +11,7 @@ export type BackgroundTaskRow = {
   status: "queued" | "running" | "completed" | "error" | "unknown"
   toolCalls: number | null
   lastTool: string | null
+  lastModel: string | null
   timeline: string
   sessionId: string | null
 }
@@ -152,9 +154,7 @@ function findTaskSessionId(opts: {
   return candidates[0]?.id ?? null
 }
 
-function deriveBackgroundSessionStats(storage: OpenCodeStorageRoots, sessionId: string): { toolCalls: number; lastTool: string | null; lastUpdateAt: number | null } {
-  const messageDir = getMessageDir(storage.message, sessionId)
-  const metas = readRecentMessageMetas(messageDir, 200)
+function deriveBackgroundSessionStats(storage: OpenCodeStorageRoots, metas: StoredMessageMeta[]): { toolCalls: number; lastTool: string | null; lastUpdateAt: number | null } {
   let toolCalls = 0
   let lastTool: string | null = null
   let lastUpdateAt: number | null = null
@@ -216,6 +216,35 @@ export function deriveBackgroundTasks(opts: {
   const messageDir = getMessageDir(opts.storage.message, opts.mainSessionId)
   const metas = readRecentMessageMetas(messageDir, 200)
   const allSessionMetas = readAllSessionMetas(opts.storage.session)
+  const backgroundMessageCache = new Map<string, StoredMessageMeta[]>()
+  const backgroundStatsCache = new Map<string, { toolCalls: number; lastTool: string | null; lastUpdateAt: number | null }>()
+  const backgroundModelCache = new Map<string, string | null>()
+
+  const readBackgroundMetas = (sessionId: string): StoredMessageMeta[] => {
+    const cached = backgroundMessageCache.get(sessionId)
+    if (cached) return cached
+    const backgroundMessageDir = getMessageDir(opts.storage.message, sessionId)
+    const recent = readRecentMessageMetas(backgroundMessageDir, 200)
+    backgroundMessageCache.set(sessionId, recent)
+    return recent
+  }
+
+  const readBackgroundStats = (sessionId: string) => {
+    const cached = backgroundStatsCache.get(sessionId)
+    if (cached) return cached
+    const recent = readBackgroundMetas(sessionId)
+    const stats = deriveBackgroundSessionStats(opts.storage, recent)
+    backgroundStatsCache.set(sessionId, stats)
+    return stats
+  }
+
+  const readBackgroundModel = (sessionId: string): string | null => {
+    if (backgroundModelCache.has(sessionId)) return backgroundModelCache.get(sessionId) ?? null
+    const recent = readBackgroundMetas(sessionId)
+    const model = pickLatestModelString(recent as unknown[])
+    backgroundModelCache.set(sessionId, model)
+    return model
+  }
 
   const rows: BackgroundTaskRow[] = []
 
@@ -283,8 +312,9 @@ export function deriveBackgroundTasks(opts: {
       }
 
       const stats = backgroundSessionId
-        ? deriveBackgroundSessionStats(opts.storage, backgroundSessionId)
+        ? readBackgroundStats(backgroundSessionId)
         : { toolCalls: 0, lastTool: null, lastUpdateAt: startedAt }
+      const lastModel = backgroundSessionId ? readBackgroundModel(backgroundSessionId) : null
 
       // Best-effort status: if background session exists and has any tool calls, treat as running unless idle.
       let status: BackgroundTaskRow["status"] = "unknown"
@@ -305,6 +335,7 @@ export function deriveBackgroundTasks(opts: {
         status,
         toolCalls: backgroundSessionId ? stats.toolCalls : null,
         lastTool: stats.lastTool,
+        lastModel,
         timeline: formatTimeline(startedAt, timelineEndMs),
         sessionId: backgroundSessionId,
       })

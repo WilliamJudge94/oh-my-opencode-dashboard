@@ -3,9 +3,40 @@ import * as path from "node:path"
 import { readBoulderState, readPlanProgress, readPlanSteps, type PlanStep } from "../ingest/boulder"
 import { deriveBackgroundTasks } from "../ingest/background-tasks"
 import { deriveTimeSeriesActivity, type TimeSeriesPayload } from "../ingest/timeseries"
-import { getMainSessionView, getStorageRoots, pickActiveSessionId, readMainSessionMetas, type OpenCodeStorageRoots, type SessionMetadata } from "../ingest/session"
+import { getMainSessionView, getStorageRoots, pickActiveSessionId, readMainSessionMetas, type MainSessionView, type OpenCodeStorageRoots, type SessionMetadata } from "../ingest/session"
 
 export type DashboardPayload = {
+  mainSession: {
+    agent: string
+    currentModel: string | null
+    currentTool: string
+    lastUpdatedLabel: string
+    session: string
+    statusPill: string
+  }
+  planProgress: {
+    name: string
+    completed: number
+    total: number
+    path: string
+    statusPill: string
+    steps: PlanStep[]
+  }
+  backgroundTasks: Array<{
+    id: string
+    description: string
+    agent: string
+    lastModel: string | null
+    status: string
+    toolCalls: number
+    lastTool: string
+    timeline: string
+  }>
+  timeSeries: TimeSeriesPayload
+  raw: unknown
+}
+
+export type LegacyDashboardPayload = {
   mainSession: {
     agent: string
     currentTool: string
@@ -35,7 +66,7 @@ export type DashboardPayload = {
 }
 
 export type DashboardStore = {
-  getSnapshot: () => DashboardPayload
+  getSnapshot: () => DashboardPayload | LegacyDashboardPayload
 }
 
 function formatIso(ts: number | null): string {
@@ -132,10 +163,13 @@ export function buildDashboardPayload(opts: {
     mainSessionId: sessionId ?? null,
     nowMs,
   })
-
+  const mainCurrentModel = "currentModel" in main
+    ? (main as MainSessionView).currentModel
+    : null
   const payload: DashboardPayload = {
     mainSession: {
       agent: main.agent,
+      currentModel: mainCurrentModel,
       currentTool: main.currentTool ?? "-",
       lastUpdatedLabel: formatIso(main.lastUpdated),
       session: main.sessionLabel,
@@ -157,6 +191,7 @@ export function buildDashboardPayload(opts: {
       id: t.id,
       description: t.description,
       agent: t.agent,
+      lastModel: t.lastModel ?? null,
       status: t.status,
       toolCalls: t.toolCalls ?? 0,
       lastTool: t.lastTool ?? "-",

@@ -1,5 +1,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { pickLatestModelString } from "./model"
 import { getOpenCodeStorageDir, realpathSafe } from "./paths"
 
 export type SessionMetadata = {
@@ -32,6 +33,7 @@ export type StoredToolPart = {
 export type MainSessionView = {
   agent: string
   currentTool: string | null
+  currentModel: string | null
   lastUpdated: number | null
   sessionLabel: string
   status: "busy" | "idle" | "unknown" | "running_tool" | "thinking"
@@ -253,6 +255,7 @@ export function getMainSessionView(opts: {
   // Scan recent messages for any in-flight tool parts
   let activeTool: { tool: string; status: string } | null = null
   const recentMetas = readRecentMessageMetas(messageDir, 200)
+  const currentModel = pickLatestModelString(recentMetas)
   
   // Iterate newest → oldest, early-exit on first tool part with pending/running status
   for (const meta of recentMetas) {
@@ -276,6 +279,7 @@ export function getMainSessionView(opts: {
   return {
     agent,
     currentTool: activeTool?.tool ?? null,
+    currentModel,
     lastUpdated,
     sessionLabel,
     status,

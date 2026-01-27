@@ -75,6 +75,7 @@ describe("buildDashboardPayload", () => {
       expect(payload.mainSession.statusPill).toBe("running tool")
       expect(payload.mainSession.currentTool).toBe("delegate_task")
       expect(payload.mainSession.agent).toBe("sisyphus")
+      expect(payload.mainSession.currentModel).toBeNull()
       
       expect(payload.raw).not.toHaveProperty("prompt")
       expect(payload.raw).not.toHaveProperty("input")
@@ -147,6 +148,7 @@ describe("buildDashboardPayload", () => {
 
       expect(payload).toHaveProperty("timeSeries")
       expect(payload.raw).toHaveProperty("timeSeries")
+      expect(payload.mainSession.currentModel).toBeNull()
 
       const sensitiveKeys = ["prompt", "input", "output", "error", "state"]
 
@@ -170,6 +172,109 @@ describe("buildDashboardPayload", () => {
       }
 
       expect(hasSensitiveKeys(payload.raw)).toBe(false)
+    } finally {
+      fs.rmSync(storageRoot, { recursive: true, force: true })
+      fs.rmSync(projectRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("includes latest model strings for main and background sessions", () => {
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omo-project-"))
+    const sessionId = "ses_with_models"
+    const backgroundSessionId = "ses_bg_1"
+    const messageId = "msg_1"
+    const projectID = "proj_1"
+
+    try {
+      const sessionMetaDir = path.join(storage.session, projectID)
+      fs.mkdirSync(sessionMetaDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(sessionMetaDir, `${sessionId}.json`),
+        JSON.stringify({
+          id: sessionId,
+          projectID,
+          directory: projectRoot,
+          time: { created: 1000, updated: 1000 },
+        }),
+        "utf8"
+      )
+      fs.writeFileSync(
+        path.join(sessionMetaDir, `${backgroundSessionId}.json`),
+        JSON.stringify({
+          id: backgroundSessionId,
+          projectID,
+          directory: projectRoot,
+          parentID: sessionId,
+          title: "Background: model task",
+          time: { created: 1000, updated: 1100 },
+        }),
+        "utf8"
+      )
+
+      const messageDir = path.join(storage.message, sessionId)
+      fs.mkdirSync(messageDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(messageDir, `${messageId}.json`),
+        JSON.stringify({
+          id: messageId,
+          sessionID: sessionId,
+          role: "assistant",
+          agent: "sisyphus",
+          time: { created: 1000 },
+        }),
+        "utf8"
+      )
+
+      const partDir = path.join(storage.part, messageId)
+      fs.mkdirSync(partDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(partDir, "part_1.json"),
+        JSON.stringify({
+          id: "part_1",
+          sessionID: sessionId,
+          messageID: messageId,
+          type: "tool",
+          callID: "call_1",
+          tool: "delegate_task",
+          state: {
+            status: "completed",
+            input: {
+              run_in_background: true,
+              description: "model task",
+              subagent_type: "explore",
+            },
+          },
+        }),
+        "utf8"
+      )
+
+      const backgroundMessageDir = path.join(storage.message, backgroundSessionId)
+      fs.mkdirSync(backgroundMessageDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(backgroundMessageDir, "msg_bg_1.json"),
+        JSON.stringify({
+          id: "msg_bg_1",
+          sessionID: backgroundSessionId,
+          role: "assistant",
+          providerID: "openai",
+          modelID: "gpt-4o",
+          time: { created: 1100 },
+        }),
+        "utf8"
+      )
+
+      const payload = buildDashboardPayload({
+        projectRoot,
+        storage,
+        nowMs: 2000,
+      })
+
+      expect(payload.mainSession.currentModel).toBeNull()
+      expect(payload.backgroundTasks).toHaveLength(1)
+      expect(payload.backgroundTasks[0]?.lastModel).toBe("openai/gpt-4o")
+      expect(payload.raw).toHaveProperty("backgroundTasks.0.lastModel", "openai/gpt-4o")
     } finally {
       fs.rmSync(storageRoot, { recursive: true, force: true })
       fs.rmSync(projectRoot, { recursive: true, force: true })

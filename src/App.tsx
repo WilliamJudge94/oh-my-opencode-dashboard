@@ -12,6 +12,7 @@ type BackgroundTask = {
   description: string;
   subline?: string;
   agent: string;
+  lastModel: string;
   status: "queued" | "running" | "done" | "error" | "cancelled" | string;
   toolCalls: number;
   lastTool: string;
@@ -47,6 +48,7 @@ type DashboardPayload = {
   mainSession: {
     agent: string;
     currentTool: string;
+    currentModel: string;
     lastUpdatedLabel: string;
     session: string;
     statusPill: string;
@@ -176,6 +178,7 @@ const FALLBACK_DATA: DashboardPayload = {
   mainSession: {
     agent: "sisyphus",
     currentTool: "dashboard_start",
+    currentModel: "anthropic/claude-opus-4-5",
     lastUpdatedLabel: "just now",
     session: "qa-session",
     statusPill: "busy",
@@ -193,6 +196,7 @@ const FALLBACK_DATA: DashboardPayload = {
       description: "Explore: find HTTP/SSE patterns",
       subline: "task-1",
       agent: "explore",
+      lastModel: "opencode/gpt-5-nano",
       status: "running",
       toolCalls: 3,
       lastTool: "grep",
@@ -271,6 +275,12 @@ async function safeFetchJson(url: string): Promise<unknown> {
   }
 }
 
+function toNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function toDashboardPayload(json: unknown): DashboardPayload {
   if (!json || typeof json !== "object") {
     return { ...FALLBACK_DATA, raw: json };
@@ -295,6 +305,7 @@ function toDashboardPayload(json: unknown): DashboardPayload {
                 ? rec.taskId
                 : undefined,
           agent: String(rec.agent ?? rec.worker ?? "unknown"),
+          lastModel: toNonEmptyString(rec.lastModel ?? rec.last_model) ?? "-",
           status: String(rec.status ?? "queued"),
           toolCalls: Number(rec.toolCalls ?? rec.tool_calls ?? 0) || 0,
           lastTool: String(rec.lastTool ?? rec.last_tool ?? "-") || "-",
@@ -312,6 +323,7 @@ function toDashboardPayload(json: unknown): DashboardPayload {
     mainSession: {
       agent: String(main.agent ?? FALLBACK_DATA.mainSession.agent),
       currentTool: String(main.currentTool ?? main.current_tool ?? FALLBACK_DATA.mainSession.currentTool),
+      currentModel: toNonEmptyString(main.currentModel ?? main.current_model) ?? "-",
       lastUpdatedLabel: String(main.lastUpdatedLabel ?? main.last_updated ?? "just now"),
       session: String(main.session ?? main.session_id ?? FALLBACK_DATA.mainSession.session),
       statusPill: String(main.statusPill ?? main.status ?? FALLBACK_DATA.mainSession.statusPill),
@@ -394,15 +406,15 @@ export default function App() {
     }
   }
 
-  function isWaitingForUser(payload: DashboardPayload): boolean {
+  const isWaitingForUser = React.useCallback((payload: DashboardPayload): boolean => {
     const status = payload.mainSession.statusPill.toLowerCase();
     const hasSession = payload.mainSession.session !== "(no session)" && payload.mainSession.session !== "";
     const idle = status.includes("idle");
     const noTool = payload.mainSession.currentTool === "-" || payload.mainSession.currentTool === "";
     return hasSession && idle && noTool;
-  }
+  }, []);
 
-  function maybePlayDings(prev: DashboardPayload | null, next: DashboardPayload) {
+  const maybePlayDings = React.useCallback((prev: DashboardPayload | null, next: DashboardPayload) => {
     if (!soundEnabledRef.current) return;
     if (!hadSuccessRef.current) return;
 
@@ -453,7 +465,7 @@ export default function App() {
     lastLeftWaitingAtRef.current = waitingDecision.next.lastLeftWaitingAtMs;
     prevPlanCompletedRef.current = completed;
     prevPlanTotalRef.current = total;
-  }
+  }, [isWaitingForUser]);
 
   const planPercent = React.useMemo(() => {
     if (!data.planProgress.total) return 0;
@@ -469,23 +481,23 @@ export default function App() {
 
     async function tick() {
       let nextConnected = false;
-      try {
-        const json = await safeFetchJson("/api/dashboard");
-        if (!alive) return;
-        nextConnected = true;
-        hadSuccessRef.current = true;
-        setConnected(true);
-        setErrorHint(null);
-         const next = toDashboardPayload(json);
-         setData((prev) => {
-           maybePlayDings(prev, next);
-           return next;
-         });
-         setLastUpdate(Date.now());
-      } catch (err) {
-        if (!alive) return;
-        nextConnected = false;
-        setConnected(false);
+        try {
+          const json = await safeFetchJson("/api/dashboard");
+          if (!alive) return;
+          nextConnected = true;
+          hadSuccessRef.current = true;
+          setConnected(true);
+          setErrorHint(null);
+          const next = toDashboardPayload(json);
+          setData((prev) => {
+            maybePlayDings(prev, next);
+            return next;
+          });
+          setLastUpdate(Date.now());
+        } catch (err) {
+          if (!alive) return;
+          nextConnected = false;
+          setConnected(false);
         const msg = err instanceof Error ? err.message : "disconnected";
         setErrorHint(msg);
         setData((prev) => {
@@ -512,7 +524,7 @@ export default function App() {
       alive = false;
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
-  }, []);
+  }, [maybePlayDings]);
 
   async function onCopyRawJson() {
     setCopyState("idle");
@@ -544,6 +556,7 @@ export default function App() {
   const bucketMs = Math.max(1, data.timeSeries.bucketMs);
   const viewBox = `0 0 ${buckets} 28`;
   const minuteStep = Math.max(1, Math.round(60_000 / bucketMs));
+  const bucketStartMs = data.timeSeries.anchorMs - (buckets - 1) * bucketMs;
 
   const overallValues = timeSeriesById.get("overall-main")?.values ?? [];
 
@@ -659,7 +672,7 @@ export default function App() {
                           if (x < 0 || x > buckets) return null;
                           return (
                             <line
-                              key={`g-${idx}`}
+                              key={`g-${bucketStartMs + x * bucketMs}`}
                               className="timeSeriesGridline"
                               x1={x}
                               x2={x}
@@ -674,9 +687,10 @@ export default function App() {
                               const h = barHeight(v ?? 0, scaleMax, chartHeight);
                               if (!h) return null;
                               const barX = i + barInset;
+                              const bucketMsAt = bucketStartMs + i * bucketMs;
                               return (
                                 <rect
-                                  key={`b-${i}`}
+                                  key={`b-${bucketMsAt}`}
                                   className="timeSeriesBarBaseline"
                                   x={barX}
                                   y={baselineY - h}
@@ -691,9 +705,10 @@ export default function App() {
                           const h = barHeight(v ?? 0, scaleMax, chartHeight);
                           if (!h) return null;
                           const barX = i + barInset;
+                          const bucketMsAt = bucketStartMs + i * bucketMs;
                           return (
                             <rect
-                              key={`o-${i}`}
+                              key={`${row.overlayId}-${bucketMsAt}`}
                               className="timeSeriesBar"
                               x={barX}
                               y={baselineY - h}
@@ -736,6 +751,10 @@ export default function App() {
                 <div className="kvRow">
                   <div className="kvKey">CURRENT TOOL</div>
                   <div className="kvVal mono">{data.mainSession.currentTool}</div>
+                </div>
+                <div className="kvRow">
+                  <div className="kvKey">CURRENT MODEL</div>
+                  <div className="kvVal mono">{data.mainSession.currentModel}</div>
                 </div>
                 <div className="kvRow">
                   <div className="kvKey">LAST UPDATED</div>
@@ -813,6 +832,7 @@ export default function App() {
                   <tr>
                     <th>DESCRIPTION</th>
                     <th>AGENT</th>
+                    <th>LAST MODEL</th>
                     <th>STATUS</th>
                     <th>TOOL CALLS</th>
                     <th>LAST TOOL</th>
@@ -827,6 +847,7 @@ export default function App() {
                         {t.subline ? <div className="taskSub mono">{t.subline}</div> : null}
                       </td>
                       <td className="mono">{t.agent}</td>
+                      <td className="mono">{t.lastModel}</td>
                       <td>
                         <span className={`pill pill-${statusTone(t.status)}`}>{t.status}</span>
                       </td>

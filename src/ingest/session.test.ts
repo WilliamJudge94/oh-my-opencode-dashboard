@@ -8,6 +8,7 @@ import {
   pickActiveSessionId,
   readMainSessionMetas,
 } from "./session"
+import { extractModelString, pickLatestModelString } from "./model"
 
 function mkStorageRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "omo-storage-"))
@@ -216,5 +217,123 @@ describe("getMainSessionView", () => {
     })
 
     expect(view.status).toBe("thinking")
+  })
+
+  it("returns null currentModel when no model metadata exists", () => {
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const projectRoot = "/tmp/project"
+    const sessionId = "ses_1"
+
+    const messageDir = path.join(storage.message, sessionId)
+    fs.mkdirSync(messageDir, { recursive: true })
+
+    const messageID = "msg_1"
+    fs.writeFileSync(
+      path.join(messageDir, `${messageID}.json`),
+      JSON.stringify({
+        id: messageID,
+        sessionID: sessionId,
+        role: "assistant",
+        agent: "sisyphus",
+        time: { created: 1000 },
+      }),
+      "utf8"
+    )
+
+    // #given no model metadata in messages
+    // #when deriving main session view
+    const view = getMainSessionView({
+      projectRoot,
+      sessionId,
+      storage,
+      sessionMeta: null,
+      nowMs: 50_000,
+    })
+
+    // #then currentModel is null
+    expect(view.currentModel).toBeNull()
+  })
+})
+
+describe("extractModelString", () => {
+  it("supports assistant flat and user nested shapes", () => {
+    // #given assistant flat model
+    const assistantMeta = {
+      role: "assistant",
+      providerID: "openai",
+      modelID: "gpt-5.2",
+    }
+
+    // #when extracting model string
+    const assistantModel = extractModelString(assistantMeta)
+
+    // #then uses provider/model format
+    expect(assistantModel).toBe("openai/gpt-5.2")
+
+    // #given user nested model
+    const userMeta = {
+      role: "user",
+      model: { providerID: "anthropic", modelID: "claude-opus-4.5" },
+    }
+
+    // #when extracting model string
+    const userModel = extractModelString(userMeta)
+
+    // #then uses provider/model format
+    expect(userModel).toBe("anthropic/claude-opus-4.5")
+  })
+})
+
+describe("pickLatestModelString", () => {
+  it("prefers latest assistant model over newer user model", () => {
+    const metas = [
+      {
+        id: "msg_1",
+        role: "assistant",
+        time: { created: 1000 },
+        providerID: "openai",
+        modelID: "gpt-5.2",
+      },
+      {
+        id: "msg_2",
+        role: "user",
+        time: { created: 2000 },
+        model: { providerID: "anthropic", modelID: "claude-opus-4.5" },
+      },
+    ]
+
+    // #given assistant with model exists but user is newer
+    // #when picking latest model string
+    const picked = pickLatestModelString(metas)
+
+    // #then assistant model is preferred
+    expect(picked).toBe("openai/gpt-5.2")
+  })
+
+  it("uses deterministic ordering by created then id", () => {
+    const metas = [
+      {
+        id: "msg_a",
+        role: "assistant",
+        time: { created: 3000 },
+        providerID: "openai",
+        modelID: "gpt-5.2",
+      },
+      {
+        id: "msg_b",
+        role: "assistant",
+        time: { created: 3000 },
+        providerID: "openai",
+        modelID: "gpt-5.2-turbo",
+      },
+    ]
+
+    // #given same created time, higher id wins
+    // #when picking latest model string
+    const picked = pickLatestModelString(metas)
+
+    // #then picks model from msg_b
+    expect(picked).toBe("openai/gpt-5.2-turbo")
   })
 })

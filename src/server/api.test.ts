@@ -6,7 +6,7 @@ describe('API Routes', () => {
     const api = createApi({
       getSnapshot: () => ({
         mainSession: { agent: "x", currentTool: "-", lastUpdatedLabel: "never", session: "s", statusPill: "idle" },
-        planProgress: { name: "p", completed: 0, total: 0, path: "", statusPill: "not started" },
+        planProgress: { name: "p", completed: 0, total: 0, path: "", statusPill: "not started", steps: [] },
         backgroundTasks: [],
         timeSeries: {
           windowMs: 0,
@@ -29,7 +29,7 @@ describe('API Routes', () => {
     const api = createApi({
       getSnapshot: () => ({
         mainSession: { agent: "x", currentTool: "-", lastUpdatedLabel: "never", session: "s", statusPill: "idle" },
-        planProgress: { name: "p", completed: 0, total: 0, path: "", statusPill: "not started" },
+        planProgress: { name: "p", completed: 0, total: 0, path: "", statusPill: "not started", steps: [] },
         backgroundTasks: [{ id: "1", description: "d", agent: "a", status: "queued", toolCalls: 0, lastTool: "-", timeline: "" }],
         timeSeries: {
           windowMs: 0,
