@@ -92,13 +92,13 @@ describe("deriveToolCalls", () => {
 
     const result = deriveToolCalls({ storage, sessionId })
     expect(result.toolCalls.map((row) => `${row.messageId}:${row.callId}`)).toEqual([
-      "msg_0:call_a",
       "msg_1:call_a",
       "msg_2:call_a",
       "msg_2:call_b",
+      "msg_0:call_a",
       "msg_3:call_z",
     ])
-    expect(result.toolCalls[0].createdAtMs).toBe(500)
+    expect(result.toolCalls[0].createdAtMs).toBe(1000)
     expect(result.toolCalls[4].createdAtMs).toBe(null)
     expect(result.truncated).toBe(false)
   })
@@ -125,6 +125,10 @@ describe("deriveToolCalls", () => {
     for (let i = 0; i < 5; i += 1) {
       const suffix = String(i).padStart(3, "0")
       expect(messageIds.has(`msg_${suffix}`)).toBe(false)
+    }
+    for (let i = totalMessages - 5; i < totalMessages; i += 1) {
+      const suffix = String(i).padStart(3, "0")
+      expect(messageIds.has(`msg_${suffix}`)).toBe(true)
     }
   })
 

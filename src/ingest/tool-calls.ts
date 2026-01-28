@@ -124,7 +124,7 @@ export function deriveToolCalls(opts: {
   const calls: Array<ToolCallSummary & { createdSortKey: number }> = []
   for (const meta of metas) {
     const createdAtMs = typeof meta.time?.created === "number" ? meta.time.created : null
-    const createdSortKey = createdAtMs ?? Infinity
+    const createdSortKey = createdAtMs ?? -Infinity
     const parts = readToolPartsForMessage(opts.storage.part, meta.id, fsLike, opts.allowedRoots)
     for (const part of parts) {
       calls.push({
@@ -142,7 +142,7 @@ export function deriveToolCalls(opts: {
   const truncatedByCalls = calls.length > MAX_TOOL_CALLS
   const toolCalls = calls
     .sort((a, b) => {
-      if (a.createdSortKey !== b.createdSortKey) return a.createdSortKey - b.createdSortKey
+      if (a.createdSortKey !== b.createdSortKey) return b.createdSortKey - a.createdSortKey
       const messageCompare = String(a.messageId).localeCompare(String(b.messageId))
       if (messageCompare !== 0) return messageCompare
       return String(a.callId).localeCompare(String(b.callId))
