@@ -1,0 +1,9 @@
+﻿services:
+  dashboard:
+    build: .
+    ports:
+      - "51234:51234"
+    environment:
+      OMO_DASHBOARD_HOST: "0.0.0.0"
+    volumes:
+      - ./:/project:ro
