@@ -2,6 +2,7 @@ import * as React from "react";
 import { computeWaitingDing } from "./ding-policy";
 import { playDing, unlockAudio } from "./sound";
 import { computeStackedSegments } from "./timeseries-stacked";
+import { formatTokenCount } from "./format-token-count";
 
 const APP_VERSION =
   typeof __APP_VERSION__ === "string" && __APP_VERSION__.trim().length > 0 ? __APP_VERSION__ : "0.0.0";
@@ -1405,11 +1406,11 @@ export default function App() {
                 <tbody>
                   <tr>
                     <td className="mono">TOTAL</td>
-                    <td className="mono">{tokenUsageTotalsForUi.input}</td>
-                    <td className="mono">{tokenUsageTotalsForUi.output}</td>
-                    <td className="mono">{tokenUsageTotalsForUi.reasoning}</td>
-                    <td className="mono">{tokenUsageTotalsForUi.cacheRead}</td>
-                    <td className="mono">{tokenUsageTotalsForUi.cacheWrite}</td>
+                    <td className="mono">{formatTokenCount(tokenUsageTotalsForUi.input)}</td>
+                    <td className="mono">{formatTokenCount(tokenUsageTotalsForUi.output)}</td>
+                    <td className="mono">{formatTokenCount(tokenUsageTotalsForUi.reasoning)}</td>
+                    <td className="mono">{formatTokenCount(tokenUsageTotalsForUi.cacheRead)}</td>
+                    <td className="mono">{formatTokenCount(tokenUsageTotalsForUi.cacheWrite)}</td>
                   </tr>
 
                   {tokenUsageRowsSorted.length === 0 ? (
@@ -1419,22 +1420,48 @@ export default function App() {
                       </td>
                     </tr>
                   ) : null}
-
-                  {tokenUsageRowsSorted.map((r) => (
-                    <tr key={r.model}>
-                      <td className="mono" title={r.model}>
-                        {r.model}
-                      </td>
-                      <td className="mono">{r.input}</td>
-                      <td className="mono">{r.output}</td>
-                      <td className="mono">{r.reasoning}</td>
-                      <td className="mono">{r.cacheRead}</td>
-                      <td className="mono">{r.cacheWrite}</td>
-                    </tr>
-                  ))}
                 </tbody>
               </table>
             </div>
+
+            {tokenUsageRowsSorted.length > 0 ? (
+              <details className="details">
+                <summary className="detailsSummary">
+                  <span className="detailsTitle">Model breakdown ({tokenUsageRowsSorted.length})</span>
+                  <span className="chev" aria-hidden="true" />
+                </summary>
+                <div className="detailsBody">
+                  <div className="tableWrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>MODEL</th>
+                          <th>INPUT</th>
+                          <th>OUTPUT</th>
+                          <th>REASONING</th>
+                          <th>CACHE.READ</th>
+                          <th>CACHE.WRITE</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tokenUsageRowsSorted.map((r) => (
+                          <tr key={r.model}>
+                            <td className="mono" title={r.model}>
+                              {r.model}
+                            </td>
+                            <td className="mono">{formatTokenCount(r.input)}</td>
+                            <td className="mono">{formatTokenCount(r.output)}</td>
+                            <td className="mono">{formatTokenCount(r.reasoning)}</td>
+                            <td className="mono">{formatTokenCount(r.cacheRead)}</td>
+                            <td className="mono">{formatTokenCount(r.cacheWrite)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </details>
+            ) : null}
           </section>
 
           <section className="card">

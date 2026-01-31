@@ -1,6 +1,6 @@
 {
   "name": "oh-my-opencode-dashboard",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Local-only, read-only dashboard for viewing OhMyOpenCode agent progress",
   "license": "SUL-1.0",
   "repository": {
