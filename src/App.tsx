@@ -9,6 +9,8 @@ const APP_VERSION =
 
 const APP_TITLE = `Agent Dashboard (v${APP_VERSION})`;
 
+const SELECTED_SOURCE_ID_STORAGE_KEY = "omo-dashboard:selectedSourceId";
+
 type BackgroundTask = {
   id: string;
   description: string;
@@ -37,6 +39,18 @@ type ToolCallsResponse = {
   toolCalls: ToolCallSummary[];
   caps?: { maxMessages: number; maxToolCalls: number };
   truncated?: boolean;
+};
+
+type DashboardSource = {
+  id: string;
+  label: string;
+  updatedAt: number;
+};
+
+type SourcesResponse = {
+  ok: boolean;
+  sources: DashboardSource[];
+  defaultSourceId: string | null;
 };
 
 type TimeSeriesTone = "muted" | "teal" | "red" | "green";
@@ -595,6 +609,108 @@ function toNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function buildDashboardUrl(sourceId: string | null): string {
+  if (!sourceId) return "/api/dashboard";
+  const qs = new URLSearchParams({ sourceId }).toString();
+  return `/api/dashboard?${qs}`;
+}
+
+export function resolveSelectedSourceId(params: {
+  sources: DashboardSource[];
+  defaultSourceId: string | null;
+  storedSourceId: string | null;
+}): string | null {
+  const ids = new Set(params.sources.map((s) => s.id));
+  if (params.storedSourceId && ids.has(params.storedSourceId)) return params.storedSourceId;
+  if (params.defaultSourceId && ids.has(params.defaultSourceId)) return params.defaultSourceId;
+  return params.sources[0]?.id ?? null;
+}
+
+function readSelectedSourceIdFromLocalStorage(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return toNonEmptyString(window.localStorage.getItem(SELECTED_SOURCE_ID_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function writeSelectedSourceIdToLocalStorage(sourceId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SELECTED_SOURCE_ID_STORAGE_KEY, sourceId);
+  } catch {
+    // ignore
+  }
+}
+
+function clearSelectedSourceIdInLocalStorage(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(SELECTED_SOURCE_ID_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function toDashboardSource(value: unknown): DashboardSource | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+  const id = toNonEmptyString(rec.id);
+  const label = toNonEmptyString(rec.label) ?? "";
+  const updatedAtRaw = toFiniteNumber(rec.updatedAt ?? rec.updated_at);
+
+  if (!id) return null;
+
+  return {
+    id,
+    label,
+    updatedAt: typeof updatedAtRaw === "number" ? Math.floor(updatedAtRaw) : 0,
+  };
+}
+
+function toSourcesResponse(value: unknown): SourcesResponse | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+
+  const ok = typeof rec.ok === "boolean" ? rec.ok : false;
+  const sourcesRaw = rec.sources;
+  const defaultSourceId = toNonEmptyString(rec.defaultSourceId ?? rec.default_source_id);
+
+  if (!Array.isArray(sourcesRaw)) return null;
+  const sources = sourcesRaw.map(toDashboardSource).filter((s): s is DashboardSource => s !== null);
+
+  return { ok, sources, defaultSourceId: defaultSourceId ?? null };
+}
+
+export function SourceSelect(props: {
+  sources: DashboardSource[];
+  selectedSourceId: string;
+  disabled: boolean;
+  onChange: (nextSourceId: string) => void;
+}) {
+  const { sources, selectedSourceId, disabled, onChange } = props;
+  const value = selectedSourceId || sources[0]?.id || "";
+  const noSources = sources.length === 0;
+
+  return (
+    <select
+      className="field"
+      aria-label="Source"
+      value={value}
+      disabled={disabled || noSources || !value}
+      onChange={(e) => onChange(e.currentTarget.value)}
+    >
+      {noSources ? <option value="">(no sources)</option> : null}
+      {sources.map((s) => (
+        <option key={s.id} value={s.id}>
+          {s.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function toToolCallSummary(value: unknown): ToolCallSummary | null {
   if (!value || typeof value !== "object") return null;
   const rec = value as Record<string, unknown>;
@@ -921,6 +1037,11 @@ export default function App() {
   }, []);
   const [errorHint, setErrorHint] = React.useState<string | null>(null);
 
+  const [sourcesState, setSourcesState] = React.useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [sources, setSources] = React.useState<DashboardSource[]>([]);
+  const [defaultSourceId, setDefaultSourceId] = React.useState<string | null>(null);
+  const [selectedSourceId, setSelectedSourceId] = React.useState<string | null>(null);
+
   const [expandedBgTaskIds, setExpandedBgTaskIds] = React.useState<Set<string>>(() => new Set());
   const [expandedMainTaskIds, setExpandedMainTaskIds] = React.useState<Set<string>>(() => new Set());
   const [toolCallsBySession, setToolCallsBySession] = React.useState<
@@ -945,6 +1066,51 @@ export default function App() {
   React.useEffect(() => {
     if (typeof document === "undefined") return;
     document.title = APP_TITLE;
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let alive = true;
+    setSourcesState("loading");
+
+    void (async () => {
+      try {
+        const raw = await safeFetchJson("/api/sources");
+        if (!alive) return;
+        const parsed = toSourcesResponse(raw);
+        if (!parsed?.ok) throw new Error("sources not ok");
+
+        setSources(parsed.sources);
+        setDefaultSourceId(parsed.defaultSourceId);
+
+        const stored = readSelectedSourceIdFromLocalStorage();
+        const nextId = resolveSelectedSourceId({
+          sources: parsed.sources,
+          defaultSourceId: parsed.defaultSourceId,
+          storedSourceId: stored,
+        });
+
+        setSelectedSourceId(nextId);
+        if (nextId) {
+          writeSelectedSourceIdToLocalStorage(nextId);
+        } else {
+          clearSelectedSourceIdInLocalStorage();
+        }
+
+        setSourcesState("ok");
+      } catch {
+        if (!alive) return;
+        setSources([]);
+        setDefaultSourceId(null);
+        setSelectedSourceId(null);
+        setSourcesState("error");
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   React.useEffect(() => {
@@ -999,6 +1165,11 @@ export default function App() {
       return next;
     });
   }
+
+  const onChangeSource = React.useCallback((nextSourceId: string) => {
+    setSelectedSourceId(nextSourceId);
+    writeSelectedSourceIdToLocalStorage(nextSourceId);
+  }, []);
 
   const isWaitingForUser = React.useCallback((payload: DashboardPayload): boolean => {
     const status = payload.mainSession.statusPill.toLowerCase();
@@ -1113,12 +1284,15 @@ export default function App() {
   }, [data.tokenUsage]);
 
   React.useEffect(() => {
+    if (sourcesState === "idle" || sourcesState === "loading") return;
+    if (sourcesState === "ok" && !selectedSourceId) return;
+
     let alive = true;
 
     async function tick() {
       let nextConnected = false;
         try {
-          const json = await safeFetchJson("/api/dashboard");
+          const json = await safeFetchJson(buildDashboardUrl(selectedSourceId));
           if (!alive) return;
           nextConnected = true;
           hadSuccessRef.current = true;
@@ -1160,7 +1334,7 @@ export default function App() {
       alive = false;
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
-  }, [maybePlayDings]);
+  }, [maybePlayDings, selectedSourceId, sourcesState]);
 
   async function onCopyRawJson() {
     setCopyState("idle");
@@ -1327,6 +1501,14 @@ export default function App() {
               <span className="pillDot" aria-hidden="true" />
               {liveLabel}
             </span>
+            {sources.length > 0 ? (
+              <SourceSelect
+                sources={sources}
+                selectedSourceId={selectedSourceId ?? defaultSourceId ?? sources[0]?.id ?? ""}
+                disabled={sourcesState !== "ok" || sources.length < 2}
+                onChange={onChangeSource}
+              />
+            ) : null}
             <button
               className="button buttonIcon"
               type="button"

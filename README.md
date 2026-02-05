@@ -16,6 +16,7 @@ Local-only, read-only dashboard for viewing OpenCode & OhMyOpenCode agent progre
 - Main session: agent, current tool/model, session label/id, last update, status.
 - Plan progress: checkbox progress + optional step list (parsed from plan markdown).
 - Main session task row: a single roll-up row for the detected main session.
+- Source dropdown (optional): switch between registered project sources; each source shows its active main session.
 - Background tasks: best-effort inferred from `delegate_task` tool parts; expandable.
 - Tool calls (metadata only): per-session tool name/status/timestamp, capped for safety.
 - Token usage: totals with an expandable per-model breakdown.
@@ -34,6 +35,23 @@ Run without installing globally (from your target project directory):
 ```bash
 bunx oh-my-opencode-dashboard@latest
 ```
+
+Register additional project sources (optional; enables the source dropdown in the UI):
+
+```bash
+bunx oh-my-opencode-dashboard@latest add --name "My Project"
+```
+
+Or run the dashboard for a different project path:
+
+```bash
+bunx oh-my-opencode-dashboard@latest add --name "My Project" --project /absolute/path/to/your/project
+```
+
+Defaults:
+
+- `--project` defaults to current working directory
+- `--name` defaults to `basename(projectRoot)`
 
 Or specify a project path explicitly:
 
@@ -97,7 +115,7 @@ bun run start -- --project /absolute/path/to/your/project
 You can use this dashboard with plain OpenCode (no `.sisyphus/`):
 
 - Plan progress will show as "not started" because `.sisyphus/boulder.json` is missing.
-- Tool calls shown in the UI are for the detected main session only (no session picker).
+- Tool calls shown in the UI are for the selected source (defaults to your `--project`).
 - Tool-call view is metadata-only (e.g., tool name/status/timing/counts). It never renders prompts, tool args, tool output, or tool errors.
 - Session discovery uses an exact directory match: your `--project` path is resolved + realpath-normalized, then compared to each session `meta.directory` (also realpath-normalized). No prefix / "contains" matching.
 
@@ -109,6 +127,7 @@ This dashboard is designed to avoid sensitive data:
 - It does not display tool arguments (`state.input`).
 - It does not display raw tool output or errors (`state.output`, `state.error`).
 - Background tasks extract an allowlist only (e.g., `description`, `subagent_type` / `category`) and derive counts/timestamps.
+- Source switching uses your registered labels; the UI does not display absolute project roots.
 
 ## Security
 

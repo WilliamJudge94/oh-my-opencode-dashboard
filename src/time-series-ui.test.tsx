@@ -4,6 +4,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   TimeSeriesActivitySection,
+  SourceSelect,
+  buildDashboardUrl,
+  resolveSelectedSourceId,
   computeMainAgentsScaleMax,
   computeOtherMainAgentsCount,
 } from "./App";
@@ -107,5 +110,70 @@ describe("time-series helpers", () => {
 
     // #then
     expect(scaleMax).toBe(10);
+  });
+});
+
+describe("SourceSelect (SSR)", () => {
+  it("should render all source labels in the dropdown", () => {
+    // #given
+    const sources = [
+      { id: "src-a", label: "Work", updatedAt: 1_700_000_000_000 },
+      { id: "src-b", label: "Personal", updatedAt: 1_700_000_100_000 },
+      { id: "src-c", label: "Sandbox", updatedAt: 1_700_000_200_000 },
+    ];
+
+    // #when
+    const html = renderToStaticMarkup(
+      <SourceSelect
+        sources={sources}
+        selectedSourceId={"src-b"}
+        disabled={false}
+        onChange={() => {
+          // noop
+        }}
+      />
+    );
+
+    // #then
+    expect(html).toContain("Work");
+    expect(html).toContain("Personal");
+    expect(html).toContain("Sandbox");
+  });
+});
+
+describe("source selection helpers", () => {
+  it("buildDashboardUrl should include ?sourceId= for non-null ids", () => {
+    // #given
+    const url = buildDashboardUrl("abc-123");
+
+    // #then
+    expect(url).toContain("/api/dashboard");
+    expect(url).toContain("?sourceId=");
+    expect(url).toContain("abc-123");
+  });
+
+  it("resolveSelectedSourceId should prefer a valid stored sourceId, else fall back to defaultSourceId", () => {
+    // #given
+    const sources = [
+      { id: "s1", label: "One", updatedAt: 0 },
+      { id: "s2", label: "Two", updatedAt: 0 },
+    ];
+
+    // #then
+    expect(
+      resolveSelectedSourceId({
+        sources,
+        defaultSourceId: "s1",
+        storedSourceId: "s2",
+      })
+    ).toBe("s2");
+
+    expect(
+      resolveSelectedSourceId({
+        sources,
+        defaultSourceId: "s1",
+        storedSourceId: "does-not-exist",
+      })
+    ).toBe("s1");
   });
 });

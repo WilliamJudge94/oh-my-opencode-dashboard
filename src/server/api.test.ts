@@ -1,11 +1,11 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 import { createApi } from "./api"
 import type { DashboardPayload, DashboardStore } from "./dashboard"
 import type { PlanStep } from "../ingest/boulder"
-import type { TimeSeriesPayload } from "../ingest/timeseries"
+import { addOrUpdateSource } from "../ingest/sources-registry"
 
 function mkStorageRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "omo-dashboard-storage-"))
@@ -77,6 +77,18 @@ function hasSensitiveKeys(value: unknown): boolean {
   return false
 }
 
+function hasKey(value: unknown, key: string): boolean {
+  if (!value || typeof value !== "object") return false
+  if (Array.isArray(value)) {
+    return value.some((item) => hasKey(item, key))
+  }
+  for (const [entryKey, child] of Object.entries(value)) {
+    if (entryKey === key) return true
+    if (hasKey(child, key)) return true
+  }
+  return false
+}
+
 const createStore = (): DashboardStore => ({
   getSnapshot: (): DashboardPayload => ({
     mainSession: {
@@ -102,6 +114,19 @@ const createStore = (): DashboardStore => ({
     raw: null,
   }),
 } satisfies DashboardStore)
+
+const createStoreWithSessionId = (sessionId: string): DashboardStore => {
+  const base = createStore().getSnapshot()
+  return {
+    getSnapshot: () => ({
+      ...base,
+      mainSession: {
+        ...base.mainSession,
+        sessionId,
+      },
+    }),
+  }
+}
 
 describe('API Routes', () => {
   it('should return health check', async () => {
@@ -133,6 +158,115 @@ describe('API Routes', () => {
     expect(data).toHaveProperty("raw")
     
     expect(hasSensitiveKeys(data)).toBe(false)
+  })
+
+  it('should return sources list without project roots', async () => {
+    const storageRoot = mkStorageRoot()
+    const projectRoot = mkProjectRoot()
+
+    const now = vi.spyOn(Date, "now")
+    let firstId: string
+    let secondId: string
+    try {
+      now.mockReturnValueOnce(Date.parse("2024-01-01T00:00:00Z"))
+      firstId = addOrUpdateSource(storageRoot, { projectRoot: mkProjectRoot(), label: "Alpha" })
+
+      now.mockReturnValueOnce(Date.parse("2024-01-02T00:00:00Z"))
+      secondId = addOrUpdateSource(storageRoot, { projectRoot: mkProjectRoot(), label: "Beta" })
+    } finally {
+      now.mockRestore()
+    }
+
+    const store = createStore()
+    const api = createApi({ store, storageRoot, projectRoot })
+
+    const res = await api.request("/sources")
+    expect(res.status).toBe(200)
+
+    const data = await res.json()
+    expect(data.ok).toBe(true)
+    expect(data.defaultSourceId).toBe(secondId)
+    expect(data.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: firstId, label: "Alpha" }),
+      expect.objectContaining({ id: secondId, label: "Beta" }),
+    ]))
+    expect(hasKey(data, "projectRoot")).toBe(false)
+  })
+
+  it('should return dashboard data for selected source', async () => {
+    const storageRoot = mkStorageRoot()
+    const projectRoot = mkProjectRoot()
+    const sourceProjectA = mkProjectRoot()
+    const sourceProjectB = mkProjectRoot()
+    const sourceA = addOrUpdateSource(storageRoot, { projectRoot: sourceProjectA, label: "A" })
+    const sourceB = addOrUpdateSource(storageRoot, { projectRoot: sourceProjectB, label: "B" })
+
+    const storeMap = new Map<string, DashboardStore>([
+      [sourceA, createStoreWithSessionId("ses_a")],
+      [sourceB, createStoreWithSessionId("ses_b")],
+    ])
+
+    const api = createApi({
+      store: createStoreWithSessionId("ses_default"),
+      storageRoot,
+      projectRoot,
+      getStoreForSource: ({ sourceId }) => storeMap.get(sourceId) ?? createStoreWithSessionId("ses_missing"),
+    })
+
+    const resA = await api.request(`/dashboard?sourceId=${sourceA}`)
+    expect(resA.status).toBe(200)
+    expect((await resA.json()).mainSession.sessionId).toBe("ses_a")
+
+    const resB = await api.request(`/dashboard?sourceId=${sourceB}`)
+    expect(resB.status).toBe(200)
+    expect((await resB.json()).mainSession.sessionId).toBe("ses_b")
+  })
+
+  it('should return 400 for unknown sources', async () => {
+    const storageRoot = mkStorageRoot()
+    const projectRoot = mkProjectRoot()
+    const store = createStore()
+    const api = createApi({ store, storageRoot, projectRoot })
+
+    const res = await api.request("/dashboard?sourceId=unknown")
+    expect(res.status).toBe(400)
+    expect((await res.json()).ok).toBe(false)
+  })
+
+  it('should use default source when sourceId is missing', async () => {
+    const storageRoot = mkStorageRoot()
+    const projectRoot = mkProjectRoot()
+    const firstRoot = mkProjectRoot()
+    const secondRoot = mkProjectRoot()
+
+    const now = vi.spyOn(Date, "now")
+    let firstId: string
+    let secondId: string
+    try {
+      now.mockReturnValueOnce(Date.parse("2024-01-01T00:00:00Z"))
+      firstId = addOrUpdateSource(storageRoot, { projectRoot: firstRoot, label: "First" })
+
+      now.mockReturnValueOnce(Date.parse("2024-01-02T00:00:00Z"))
+      secondId = addOrUpdateSource(storageRoot, { projectRoot: secondRoot, label: "Second" })
+    } finally {
+      now.mockRestore()
+    }
+
+    const storeMap = new Map<string, DashboardStore>([
+      [firstId, createStoreWithSessionId("ses_first")],
+      [secondId, createStoreWithSessionId("ses_second")],
+    ])
+
+    const api = createApi({
+      store: createStoreWithSessionId("ses_fallback"),
+      storageRoot,
+      projectRoot,
+      getStoreForSource: ({ sourceId }) => storeMap.get(sourceId) ?? createStoreWithSessionId("ses_missing"),
+    })
+
+    const res = await api.request("/dashboard")
+    expect(res.status).toBe(200)
+    expect((await res.json()).mainSession.sessionId).toBe("ses_second")
   })
 
   it('should reject invalid session IDs', async () => {

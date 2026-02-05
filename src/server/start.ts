@@ -1,16 +1,19 @@
 #!/usr/bin/env bun
 import { Hono } from 'hono'
-import { join } from 'node:path'
+import * as fs from "node:fs"
+import { basename, join } from 'node:path'
 import { parseArgs } from 'util'
 import { createApi } from "./api"
-import { createDashboardStore } from "./dashboard"
+import { createDashboardStore, type DashboardStore } from "./dashboard"
 import { getOpenCodeStorageDir } from "../ingest/paths"
+import { addOrUpdateSource } from "../ingest/sources-registry"
 
-const { values } = parseArgs({
+const { values, positionals } = parseArgs({
   args: Bun.argv,
   options: {
     project: { type: 'string' },
     port: { type: 'string' },
+    name: { type: 'string' },
   },
   allowPositionals: true,
 })
@@ -18,6 +21,37 @@ const { values } = parseArgs({
 const project = values.project ?? process.cwd()
 
 const port = parseInt(values.port || '51234')
+
+const cleanedPositionals = [...positionals]
+if (cleanedPositionals[0] === Bun.argv[0]) cleanedPositionals.shift()
+if (cleanedPositionals[0] === Bun.argv[1]) cleanedPositionals.shift()
+const command = cleanedPositionals[0]
+
+if (command === "add") {
+  const projectRoot = project
+  if (!fs.existsSync(projectRoot)) {
+    console.error("Project path does not exist.")
+    process.exit(1)
+  }
+  if (!fs.statSync(projectRoot).isDirectory()) {
+    console.error("Project path must be a directory.")
+    process.exit(1)
+  }
+
+  const rawLabel = values.name ?? basename(projectRoot)
+  const trimmedLabel = rawLabel.trim()
+  const MAX_LABEL_LENGTH = 80
+  const label = trimmedLabel.slice(0, MAX_LABEL_LENGTH)
+  if (!label) {
+    console.error("Source name is required.")
+    process.exit(1)
+  }
+
+  const storageRoot = getOpenCodeStorageDir()
+  const id = addOrUpdateSource(storageRoot, { projectRoot, label })
+  console.log(`Added source ${id}: ${label}`)
+  process.exit(0)
+}
 
 const app = new Hono()
 
@@ -30,7 +64,31 @@ const store = createDashboardStore({
   pollIntervalMs: 2000,
 })
 
-app.route('/api', createApi({ store, storageRoot, projectRoot: project }))
+const storeBySourceId = new Map<string, DashboardStore>()
+const storeByProjectRoot = new Map<string, DashboardStore>([[project, store]])
+
+const getStoreForSource = ({ sourceId, projectRoot }: { sourceId: string; projectRoot: string }) => {
+  const existing = storeBySourceId.get(sourceId)
+  if (existing) return existing
+
+  const byRoot = storeByProjectRoot.get(projectRoot)
+  if (byRoot) {
+    storeBySourceId.set(sourceId, byRoot)
+    return byRoot
+  }
+
+  const created = createDashboardStore({
+    projectRoot,
+    storageRoot,
+    watch: true,
+    pollIntervalMs: 2000,
+  })
+  storeBySourceId.set(sourceId, created)
+  storeByProjectRoot.set(projectRoot, created)
+  return created
+}
+
+app.route('/api', createApi({ store, storageRoot, projectRoot: project, getStoreForSource }))
 
 const distRoot = join(import.meta.dir, '../../dist')
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { Hono } from "hono"
 import { createApi } from "./api"
-import { createDashboardStore } from "./dashboard"
+import { createDashboardStore, type DashboardStore } from "./dashboard"
 import { getOpenCodeStorageDir } from "../ingest/paths"
 
 const args = process.argv.slice(2)
@@ -35,7 +35,31 @@ const store = createDashboardStore({
   pollIntervalMs: 2000,
 })
 
-app.route("/api", createApi({ store, storageRoot, projectRoot: resolvedProjectPath }))
+const storeBySourceId = new Map<string, DashboardStore>()
+const storeByProjectRoot = new Map<string, DashboardStore>([[resolvedProjectPath, store]])
+
+const getStoreForSource = ({ sourceId, projectRoot }: { sourceId: string; projectRoot: string }) => {
+  const existing = storeBySourceId.get(sourceId)
+  if (existing) return existing
+
+  const byRoot = storeByProjectRoot.get(projectRoot)
+  if (byRoot) {
+    storeBySourceId.set(sourceId, byRoot)
+    return byRoot
+  }
+
+  const created = createDashboardStore({
+    projectRoot,
+    storageRoot,
+    watch: true,
+    pollIntervalMs: 2000,
+  })
+  storeBySourceId.set(sourceId, created)
+  storeByProjectRoot.set(projectRoot, created)
+  return created
+}
+
+app.route("/api", createApi({ store, storageRoot, projectRoot: resolvedProjectPath, getStoreForSource }))
 
 Bun.serve({
   fetch: app.fetch,
