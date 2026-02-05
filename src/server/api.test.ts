@@ -164,12 +164,18 @@ describe('API Routes', () => {
     const storageRoot = mkStorageRoot()
     const projectRoot = mkProjectRoot()
 
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date("2024-01-01T00:00:00Z"))
-    const firstId = addOrUpdateSource(storageRoot, { projectRoot: mkProjectRoot(), label: "Alpha" })
-    vi.setSystemTime(new Date("2024-01-02T00:00:00Z"))
-    const secondId = addOrUpdateSource(storageRoot, { projectRoot: mkProjectRoot(), label: "Beta" })
-    vi.useRealTimers()
+    const now = vi.spyOn(Date, "now")
+    let firstId: string
+    let secondId: string
+    try {
+      now.mockReturnValueOnce(Date.parse("2024-01-01T00:00:00Z"))
+      firstId = addOrUpdateSource(storageRoot, { projectRoot: mkProjectRoot(), label: "Alpha" })
+
+      now.mockReturnValueOnce(Date.parse("2024-01-02T00:00:00Z"))
+      secondId = addOrUpdateSource(storageRoot, { projectRoot: mkProjectRoot(), label: "Beta" })
+    } finally {
+      now.mockRestore()
+    }
 
     const store = createStore()
     const api = createApi({ store, storageRoot, projectRoot })
@@ -233,12 +239,18 @@ describe('API Routes', () => {
     const firstRoot = mkProjectRoot()
     const secondRoot = mkProjectRoot()
 
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date("2024-01-01T00:00:00Z"))
-    const firstId = addOrUpdateSource(storageRoot, { projectRoot: firstRoot, label: "First" })
-    vi.setSystemTime(new Date("2024-01-02T00:00:00Z"))
-    const secondId = addOrUpdateSource(storageRoot, { projectRoot: secondRoot, label: "Second" })
-    vi.useRealTimers()
+    const now = vi.spyOn(Date, "now")
+    let firstId: string
+    let secondId: string
+    try {
+      now.mockReturnValueOnce(Date.parse("2024-01-01T00:00:00Z"))
+      firstId = addOrUpdateSource(storageRoot, { projectRoot: firstRoot, label: "First" })
+
+      now.mockReturnValueOnce(Date.parse("2024-01-02T00:00:00Z"))
+      secondId = addOrUpdateSource(storageRoot, { projectRoot: secondRoot, label: "Second" })
+    } finally {
+      now.mockRestore()
+    }
 
     const storeMap = new Map<string, DashboardStore>([
       [firstId, createStoreWithSessionId("ses_first")],
