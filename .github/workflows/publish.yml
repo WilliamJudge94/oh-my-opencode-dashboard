@@ -53,7 +53,12 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          npm publish --provenance --access public --loglevel verbose || {
+          PKG_VERSION=$(jq -r '.version' package.json)
+          NPM_TAG="latest"
+          case "$PKG_VERSION" in
+            *-*) NPM_TAG="beta" ;;
+          esac
+          npm publish --provenance --access public --loglevel verbose --tag "$NPM_TAG" || {
             echo "npm publish failed; dumping npm debug logs";
             ls -la "$HOME/.npm/_logs" || true;
             tail -n +1 "$HOME/.npm/_logs"/*-debug-0.log || true;
