@@ -1202,4 +1202,145 @@ describe("deriveBackgroundTasks", () => {
     expect(rows.length).toBe(2)
     expect(backgroundReads.length).toBe(1)
   })
+
+  it.each(["delegate_task", "task"])("treats tool: '%s' the same as tool: 'delegate_task'", (toolName) => {
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const mainSessionId = "ses_main"
+
+    const msgDir = path.join(storage.message, mainSessionId)
+    fs.mkdirSync(msgDir, { recursive: true })
+    const messageID = "msg_1"
+    fs.writeFileSync(
+      path.join(msgDir, `${messageID}.json`),
+      JSON.stringify({
+        id: messageID,
+        sessionID: mainSessionId,
+        role: "assistant",
+        time: { created: 1000 },
+      }),
+      "utf8"
+    )
+
+    const partDir = path.join(storage.part, messageID)
+    fs.mkdirSync(partDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(partDir, `part_${toolName}.json`),
+      JSON.stringify({
+        id: `part_${toolName}`,
+        sessionID: mainSessionId,
+        messageID,
+        type: "tool",
+        callID: `call_${toolName}`,
+        tool: toolName,
+        state: {
+          status: "completed",
+          input: {
+            run_in_background: true,
+            description: "Task tool equivalence test",
+            subagent_type: "explore",
+          },
+        },
+      }),
+      "utf8"
+    )
+
+    const projectID = "proj"
+    const sessDir = path.join(storage.session, projectID)
+    fs.mkdirSync(sessDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(sessDir, "ses_child.json"),
+      JSON.stringify({
+        id: "ses_child",
+        projectID,
+        directory: "/tmp/project",
+        title: "Background: Task tool equivalence test",
+        parentID: mainSessionId,
+        time: { created: 1500, updated: 1500 },
+      }),
+      "utf8"
+    )
+
+    // Add a message and tool call to the child session so status becomes "completed"
+    const childMsgDir = path.join(storage.message, "ses_child")
+    fs.mkdirSync(childMsgDir, { recursive: true })
+    const childMsgId = "msg_child"
+    fs.writeFileSync(
+      path.join(childMsgDir, `${childMsgId}.json`),
+      JSON.stringify({
+        id: childMsgId,
+        sessionID: "ses_child",
+        role: "assistant",
+        time: { created: 2000 },
+      }),
+      "utf8"
+    )
+    const childPartDir = path.join(storage.part, childMsgId)
+    fs.mkdirSync(childPartDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(childPartDir, "part_child.json"),
+      JSON.stringify({
+        id: "part_child",
+        sessionID: "ses_child",
+        messageID: childMsgId,
+        type: "tool",
+        callID: "call_child",
+        tool: "read",
+        state: { status: "completed", input: {} },
+      }),
+      "utf8"
+    )
+
+    const rows = deriveBackgroundTasks({ storage, mainSessionId })
+    expect(rows.length).toBe(1)
+    expect(rows[0].description).toBe("Task tool equivalence test")
+    expect(rows[0].agent).toBe("explore")
+    expect(rows[0].sessionId).toBe("ses_child")
+    expect(rows[0].status).toBe("completed")
+    expect(rows[0].id).toBe(`call_${toolName}`)
+  })
+
+  it("ignores non-task tools like 'bash'", () => {
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const mainSessionId = "ses_main"
+
+    const msgDir = path.join(storage.message, mainSessionId)
+    fs.mkdirSync(msgDir, { recursive: true })
+    const messageID = "msg_1"
+    fs.writeFileSync(
+      path.join(msgDir, `${messageID}.json`),
+      JSON.stringify({
+        id: messageID,
+        sessionID: mainSessionId,
+        role: "assistant",
+        time: { created: 1000 },
+      }),
+      "utf8"
+    )
+
+    const partDir = path.join(storage.part, messageID)
+    fs.mkdirSync(partDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(partDir, "part_bash.json"),
+      JSON.stringify({
+        id: "part_bash",
+        sessionID: mainSessionId,
+        messageID,
+        type: "tool",
+        callID: "call_bash",
+        tool: "bash",
+        state: {
+          status: "completed",
+          input: {
+            command: "echo 'test'",
+          },
+        },
+      }),
+      "utf8"
+    )
+
+    const rows = deriveBackgroundTasks({ storage, mainSessionId })
+    expect(rows.length).toBe(0)
+  })
 })

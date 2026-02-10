@@ -17,7 +17,7 @@ Local-only, read-only dashboard for viewing OpenCode & OhMyOpenCode agent progre
 - Plan progress: checkbox progress + optional step list (parsed from plan markdown).
 - Main session task row: a single roll-up row for the detected main session.
 - Source dropdown (optional): switch between registered project sources; each source shows its active main session.
-- Background tasks: best-effort inferred from `delegate_task` tool parts; expandable.
+- Background tasks: best-effort inferred from `delegate_task`/`task` tool parts; expandable.
 - Tool calls (metadata only): per-session tool name/status/timestamp, capped for safety.
 - Token usage: totals with an expandable per-model breakdown.
 - Time-series activity: last 5 minutes of tool-call counts (main agents + background total).

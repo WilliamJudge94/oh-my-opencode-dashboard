@@ -294,6 +294,12 @@ function formatTimeline(startAt: number | null, endAtMs: number): string {
   return `${start}: ${elapsed}`
 }
 
+const TASK_TOOL_NAMES = new Set(["delegate_task", "task"])
+
+function isTaskTool(toolName: string): boolean {
+  return TASK_TOOL_NAMES.has(toolName)
+}
+
 export function deriveBackgroundTasks(opts: {
   storage: OpenCodeStorageRoots
   mainSessionId: string
@@ -345,7 +351,7 @@ export function deriveBackgroundTasks(opts: {
 
     const parts = readToolPartsForMessage(opts.storage, meta.id, fsLike)
     for (const part of parts) {
-      if (part.tool !== "delegate_task") continue
+      if (!isTaskTool(part.tool)) continue
       if (!part.state || typeof part.state !== "object") continue
 
       const input = part.state.input ?? {}
