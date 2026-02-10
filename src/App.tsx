@@ -1285,7 +1285,7 @@ export default function App() {
 
   React.useEffect(() => {
     if (sourcesState === "idle" || sourcesState === "loading") return;
-    if (sourcesState === "ok" && !selectedSourceId) return;
+    if (sourcesState === "ok" && !selectedSourceId && sources.length > 0) return;
 
     let alive = true;
 
@@ -1334,7 +1334,7 @@ export default function App() {
       alive = false;
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
-  }, [maybePlayDings, selectedSourceId, sourcesState]);
+  }, [maybePlayDings, selectedSourceId, sources.length, sourcesState]);
 
   async function onCopyRawJson() {
     setCopyState("idle");
