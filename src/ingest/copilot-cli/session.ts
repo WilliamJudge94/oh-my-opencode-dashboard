@@ -1,6 +1,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { getSessionDir } from "./paths"
+import { getSessionDir, listSessionDirs } from "./paths"
 
 /**
  * Copilot CLI workspace metadata from workspace.yaml
@@ -74,7 +74,6 @@ export function readWorkspaceMetadata(sessionId: string, stateDirOverride?: stri
  * List all Copilot CLI sessions with their metadata.
  */
 export function listCopilotSessions(stateDirOverride?: string): CopilotWorkspaceMetadata[] {
-  const { listSessionDirs } = require("./paths")
   const sessionIds = listSessionDirs(stateDirOverride)
   
   const sessions: CopilotWorkspaceMetadata[] = []
