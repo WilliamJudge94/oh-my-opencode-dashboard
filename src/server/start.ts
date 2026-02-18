@@ -66,6 +66,26 @@ const app = new Hono()
 const storageBackend = selectStorageBackend()
 const storageRoot = getLegacyStorageRootForBackend(storageBackend)
 
+// Auto-register recent Copilot CLI sessions
+const { listCopilotSessions } = require("../ingest/copilot-cli/session")
+const { addCopilotCliSource } = require("../ingest/sources-registry")
+try {
+  const copilotSessions = listCopilotSessions()
+  // Register up to 5 most recent Copilot CLI sessions
+  const recentSessions = copilotSessions.slice(0, 5)
+  for (const session of recentSessions) {
+    const label = session.summary
+      ? `Copilot: ${session.summary.slice(0, 60)}`
+      : `Copilot Session: ${session.id.slice(0, 8)}`
+    addCopilotCliSource(storageRoot, {
+      sessionId: session.id,
+      label,
+    })
+  }
+} catch {
+  // Ignore errors if Copilot CLI sessions can't be scanned
+}
+
 if (isBunxInvocation(Bun.argv) && storageBackend.kind === "sqlite" && listSources(storageRoot).length === 0) {
   console.log("Please make sure you have added directories you want to track (OpenCode SQLite update). Run:")
   console.log('bunx oh-my-opencode-dashboard@latest add --name "My Project"')

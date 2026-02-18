@@ -7,6 +7,7 @@ export type SourceRegistryEntry = {
   id: string
   projectRoot: string
   label?: string
+  kind?: "opencode" | "copilot-cli"
   createdAt: number
   updatedAt: number
 }
@@ -67,7 +68,7 @@ export function loadRegistry(storageRoot: string): SourcesRegistry {
 
 export function addOrUpdateSource(
   storageRoot: string,
-  input: { projectRoot: string; label?: string }
+  input: { projectRoot: string; label?: string; kind?: "opencode" | "copilot-cli" }
 ): string {
   const canonical = canonicalizeProjectRoot(input.projectRoot)
   const id = hashProjectRoot(canonical)
@@ -79,6 +80,7 @@ export function addOrUpdateSource(
     registry.sources[id] = {
       ...existing,
       label: input.label ?? existing.label,
+      kind: input.kind ?? existing.kind,
       updatedAt: now,
     }
   } else {
@@ -86,6 +88,7 @@ export function addOrUpdateSource(
       id,
       projectRoot: canonical,
       label: input.label,
+      kind: input.kind,
       createdAt: now,
       updatedAt: now,
     }
@@ -116,4 +119,19 @@ export function getDefaultSourceId(storageRoot: string): string | null {
 export function getSourceById(storageRoot: string, sourceId: string): SourceRegistryEntry | null {
   const registry = loadRegistry(storageRoot)
   return registry.sources[sourceId] ?? null
+}
+
+/**
+ * Add or update a Copilot CLI session as a source.
+ * Uses the session ID as the projectRoot identifier.
+ */
+export function addCopilotCliSource(
+  storageRoot: string,
+  input: { sessionId: string; label?: string }
+): string {
+  return addOrUpdateSource(storageRoot, {
+    projectRoot: input.sessionId,
+    label: input.label,
+    kind: "copilot-cli",
+  })
 }

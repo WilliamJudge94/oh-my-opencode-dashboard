@@ -38,6 +38,18 @@ export function createApi(opts: {
       if (!source) {
         return c.json({ ok: false, sourceId }, 400)
       }
+      
+      // Route by source kind
+      if (source.kind === "copilot-cli") {
+        const { buildDashboardPayloadCopilotCli } = require("./dashboard")
+        const payload = buildDashboardPayloadCopilotCli({
+          sessionId: source.projectRoot, // For Copilot CLI, projectRoot is the sessionId
+          nowMs: Date.now(),
+        })
+        return c.json(payload)
+      }
+      
+      // Default to OpenCode handling
       const store = opts.getStoreForSource
         ? opts.getStoreForSource({ sourceId, projectRoot: source.projectRoot })
         : opts.store
@@ -48,6 +60,16 @@ export function createApi(opts: {
     if (defaultSourceId) {
       const source = getSourceById(opts.storageRoot, defaultSourceId)
       if (source) {
+        // Route by source kind
+        if (source.kind === "copilot-cli") {
+          const { buildDashboardPayloadCopilotCli } = require("./dashboard")
+          const payload = buildDashboardPayloadCopilotCli({
+            sessionId: source.projectRoot, // For Copilot CLI, projectRoot is the sessionId
+            nowMs: Date.now(),
+          })
+          return c.json(payload)
+        }
+        
         const store = opts.getStoreForSource
           ? opts.getStoreForSource({ sourceId: defaultSourceId, projectRoot: source.projectRoot })
           : opts.store
