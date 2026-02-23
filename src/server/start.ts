@@ -6,7 +6,8 @@ import { parseArgs } from 'util'
 import { createApi } from "./api"
 import { createDashboardStore, type DashboardStore } from "./dashboard"
 import { getLegacyStorageRootForBackend, selectStorageBackend } from "../ingest/storage-backend"
-import { addOrUpdateSource, listSources } from "../ingest/sources-registry"
+import { addOrUpdateSource, listSources, addCopilotCliSource } from "../ingest/sources-registry"
+import { listCopilotSessions } from "../ingest/copilot-cli/session"
 
 function isBunxInvocation(argv: string[]): boolean {
   if (process.env.BUN_INSTALL_CACHE_DIR) return true
@@ -65,6 +66,24 @@ const app = new Hono()
 
 const storageBackend = selectStorageBackend()
 const storageRoot = getLegacyStorageRootForBackend(storageBackend)
+
+// Auto-register recent Copilot CLI sessions
+try {
+  const copilotSessions = listCopilotSessions()
+  // Register up to 5 most recent Copilot CLI sessions
+  const recentSessions = copilotSessions.slice(0, 5)
+  for (const session of recentSessions) {
+    const label = session.summary
+      ? `Copilot: ${session.summary.slice(0, 60)}`
+      : `Copilot Session: ${session.id.slice(0, 8)}`
+    addCopilotCliSource(storageRoot, {
+      sessionId: session.id,
+      label,
+    })
+  }
+} catch {
+  // Ignore errors if Copilot CLI sessions can't be scanned
+}
 
 if (isBunxInvocation(Bun.argv) && storageBackend.kind === "sqlite" && listSources(storageRoot).length === 0) {
   console.log("Please make sure you have added directories you want to track (OpenCode SQLite update). Run:")

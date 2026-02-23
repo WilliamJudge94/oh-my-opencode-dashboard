@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import * as path from "node:path"
 import type { DashboardStore } from "./dashboard"
+import { buildDashboardPayloadCopilotCli } from "./dashboard"
 import { assertAllowedPath } from "../ingest/paths"
 import { getMessageDir, getStorageRoots } from "../ingest/session"
 import { deriveToolCalls, MAX_TOOL_CALL_MESSAGES, MAX_TOOL_CALLS } from "../ingest/tool-calls"
@@ -38,6 +39,17 @@ export function createApi(opts: {
       if (!source) {
         return c.json({ ok: false, sourceId }, 400)
       }
+      
+      // Route by source kind
+      if (source.kind === "copilot-cli") {
+        const payload = buildDashboardPayloadCopilotCli({
+          sessionId: source.projectRoot, // For Copilot CLI, projectRoot is the sessionId
+          nowMs: Date.now(),
+        })
+        return c.json(payload)
+      }
+      
+      // Default to OpenCode handling
       const store = opts.getStoreForSource
         ? opts.getStoreForSource({ sourceId, projectRoot: source.projectRoot })
         : opts.store
@@ -48,6 +60,15 @@ export function createApi(opts: {
     if (defaultSourceId) {
       const source = getSourceById(opts.storageRoot, defaultSourceId)
       if (source) {
+        // Route by source kind
+        if (source.kind === "copilot-cli") {
+          const payload = buildDashboardPayloadCopilotCli({
+            sessionId: source.projectRoot, // For Copilot CLI, projectRoot is the sessionId
+            nowMs: Date.now(),
+          })
+          return c.json(payload)
+        }
+        
         const store = opts.getStoreForSource
           ? opts.getStoreForSource({ sourceId: defaultSourceId, projectRoot: source.projectRoot })
           : opts.store

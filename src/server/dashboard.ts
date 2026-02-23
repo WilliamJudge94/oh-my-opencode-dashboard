@@ -1,7 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { readBoulderState, readPlanProgress, readPlanSteps, type PlanStep } from "../ingest/boulder"
-import { deriveBackgroundTasks } from "../ingest/background-tasks"
+import { deriveBackgroundTasks, type BackgroundTaskRow } from "../ingest/background-tasks"
 import { deriveTimeSeriesActivity, type TimeSeriesPayload } from "../ingest/timeseries"
 import { getMainSessionView, getStorageRoots, pickActiveSessionId, readMainSessionMetas, type MainSessionView, type OpenCodeStorageRoots, type SessionMetadata } from "../ingest/session"
 import { deriveToolCalls } from "../ingest/tool-calls"
@@ -16,6 +16,9 @@ import {
   pickActiveSessionIdSqlite,
 } from "../ingest/sqlite-derive"
 import { readMainSessionMetasSqlite } from "../ingest/storage-backend"
+import { readWorkspaceMetadata } from "../ingest/copilot-cli/session"
+import { deriveMainSessionView as deriveCopilotMainSessionView } from "../ingest/copilot-cli/events"
+import { deriveCopilotTasks } from "../ingest/copilot-cli/tasks"
 
 export type DashboardPayload = {
   mainSession: {
@@ -460,6 +463,109 @@ export function buildDashboardPayload(opts: {
     mainSessionTasks: payload.mainSessionTasks,
     timeSeries: payload.timeSeries,
   }
+  return payload
+}
+
+/**
+ * Build dashboard payload for a Copilot CLI session.
+ */
+export function buildDashboardPayloadCopilotCli(opts: {
+  sessionId: string
+  stateDirOverride?: string
+  nowMs?: number
+}): DashboardPayload {
+  const nowMs = opts.nowMs ?? Date.now()
+  
+  const workspace = readWorkspaceMetadata(opts.sessionId, opts.stateDirOverride)
+  const sessionLabel = workspace?.summary ?? opts.sessionId
+  
+  const main = deriveCopilotMainSessionView({
+    sessionId: opts.sessionId,
+    sessionLabel,
+    stateDirOverride: opts.stateDirOverride,
+    nowMs,
+  })
+  
+  const tasks = deriveCopilotTasks({
+    sessionId: opts.sessionId,
+    stateDirOverride: opts.stateDirOverride,
+    nowMs,
+  })
+  
+  // Copilot CLI doesn't have plan files
+  const planProgress = {
+    name: "(no plan)",
+    completed: 0,
+    total: 0,
+    path: "",
+    statusPill: "not started",
+    steps: [],
+  }
+  
+  // Create main session task entry
+  const mainSessionTasks = [{
+    id: "main-session",
+    description: "Main session",
+    subline: opts.sessionId,
+    agent: main.agent,
+    lastModel: main.currentModel,
+    status: main.status === "running_tool" || main.status === "thinking" || main.status === "busy"
+      ? "running"
+      : main.status === "idle"
+        ? "idle"
+        : "unknown",
+    toolCalls: tasks.length,
+    lastTool: main.currentTool ?? "-",
+    timeline: formatTimeline(workspace?.created_at ?? 0, nowMs),
+    sessionId: opts.sessionId,
+  }]
+  
+  // Copilot CLI doesn't track time series or token usage yet
+  const timeSeries: TimeSeriesPayload = {
+    windowMs: 3600000, // 1 hour
+    bucketMs: 300000, // 5 minutes
+    buckets: 12,
+    anchorMs: nowMs,
+    serverNowMs: nowMs,
+    series: [],
+  }
+  
+  const payload: DashboardPayload = {
+    mainSession: {
+      agent: main.agent,
+      currentModel: main.currentModel,
+      currentTool: main.currentTool ?? "-",
+      lastUpdatedLabel: formatIso(main.lastUpdated),
+      session: sessionLabel,
+      sessionId: opts.sessionId,
+      statusPill: mainStatusPill(main.status),
+    },
+    planProgress,
+    backgroundTasks: tasks.map((t: BackgroundTaskRow) => ({
+      id: t.id,
+      description: t.description,
+      agent: t.agent,
+      lastModel: t.lastModel ?? null,
+      status: t.status,
+      toolCalls: t.toolCalls ?? 0,
+      lastTool: t.lastTool ?? "-",
+      timeline: t.timeline,
+      sessionId: t.sessionId ?? null,
+    })),
+    mainSessionTasks,
+    timeSeries,
+    tokenUsage: undefined,
+    raw: null,
+  }
+  
+  payload.raw = {
+    mainSession: payload.mainSession,
+    planProgress: payload.planProgress,
+    backgroundTasks: payload.backgroundTasks,
+    mainSessionTasks: payload.mainSessionTasks,
+    timeSeries: payload.timeSeries,
+  }
+  
   return payload
 }
 
