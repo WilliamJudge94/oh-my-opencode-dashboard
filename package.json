@@ -8,6 +8,24 @@
     "url": "https://github.com/WilliamJudge94/oh-my-opencode-dashboard"
   },
   "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/server/start.ts",
+      "types": "./src/server/start.ts"
+    },
+    "./ingest": {
+      "import": "./src/ingest/index.ts",
+      "types": "./src/ingest/index.ts"
+    },
+    "./server/api": {
+      "import": "./src/server/api.ts",
+      "types": "./src/server/api.ts"
+    },
+    "./server/dashboard": {
+      "import": "./src/server/dashboard.ts",
+      "types": "./src/server/dashboard.ts"
+    }
+  },
   "bin": {
     "oh-my-opencode-dashboard": "./src/server/start.ts"
   },
