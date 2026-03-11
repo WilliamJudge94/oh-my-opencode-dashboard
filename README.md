@@ -83,6 +83,7 @@ oh-my-opencode-dashboard
 Options:
 
 - `--project <path>` (optional): project root used for plan lookup + session filtering (defaults to current working directory)
+- `--host <hostname>` (optional): server bind host (defaults to `127.0.0.1`; can also be set with `OMO_DASHBOARD_HOST`)
 - `--port <number>` (optional): default 51234
 
 ## Install (from source)
@@ -104,6 +105,18 @@ Production (single server serving UI + API):
 ```bash
 bun run build
 bun run start -- --project /absolute/path/to/your/project
+```
+
+Bind to a different host when needed (for example in containers):
+
+```bash
+OMO_DASHBOARD_HOST=localhost bun run start -- --project /absolute/path/to/your/project
+```
+
+Or via CLI:
+
+```bash
+bun run start -- --project /absolute/path/to/your/project --host localhost
 ```
 
 ## What It Reads (SQLite + Legacy)
@@ -146,7 +159,7 @@ This dashboard is designed to avoid sensitive data:
 
 ## Security
 
-- Server binds to `127.0.0.1` only.
+- Server binds to `127.0.0.1` by default.
 - Path access is allowlisted and realpath-based to prevent symlink escape:
   - project root
   - OpenCode storage root
