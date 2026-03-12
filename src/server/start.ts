@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
-import { Hono } from 'hono'
 import * as fs from "node:fs"
 import { basename, join } from 'node:path'
-import { parseArgs } from 'util'
+import { parseArgs } from 'node:util'
+import { Hono } from 'hono'
+import { addOrUpdateSource, listSources } from "../ingest/sources-registry"
+import { getLegacyStorageRootForBackend, selectStorageBackend } from "../ingest/storage-backend"
 import { createApi } from "./api"
 import { createDashboardStore, type DashboardStore } from "./dashboard"
-import { getLegacyStorageRootForBackend, selectStorageBackend } from "../ingest/storage-backend"
-import { addOrUpdateSource, listSources } from "../ingest/sources-registry"
+import { getPublicHost, resolveServerHost } from "./host"
+import { resolveStaticFilePath } from "./static-file"
 
 function isBunxInvocation(argv: string[]): boolean {
   if (process.env.BUN_INSTALL_CACHE_DIR) return true
@@ -20,6 +22,7 @@ const { values, positionals } = parseArgs({
   options: {
     project: { type: 'string' },
     port: { type: 'string' },
+    host: { type: 'string' },
     name: { type: 'string' },
   },
   allowPositionals: true,
@@ -27,7 +30,8 @@ const { values, positionals } = parseArgs({
 
 const project = values.project ?? process.cwd()
 
-const port = parseInt(values.port || '51234')
+const port = parseInt(values.port || '51234', 10)
+const host = resolveServerHost({ cliHost: values.host, envHost: process.env.OMO_DASHBOARD_HOST })
 
 const cleanedPositionals = [...positionals]
 if (cleanedPositionals[0] === Bun.argv[0]) cleanedPositionals.shift()
@@ -111,12 +115,12 @@ const distRoot = join(import.meta.dir, '../../dist')
 // SPA fallback middleware
 app.use('*', async (c, next) => {
   const path = c.req.path
-  
+
   // Skip API routes - let them pass through
   if (path.startsWith('/api/')) {
     return await next()
   }
-  
+
   // For non-API routes without extensions, serve index.html
   if (!path.includes('.')) {
     const indexFile = Bun.file(join(distRoot, 'index.html'))
@@ -125,10 +129,14 @@ app.use('*', async (c, next) => {
     }
     return c.notFound()
   }
-  
+
   // For static files with extensions, try to serve them
-  const relativePath = path.startsWith('/') ? path.slice(1) : path
-  const file = Bun.file(join(distRoot, relativePath))
+  const filePath = resolveStaticFilePath(distRoot, path)
+  if (!filePath) {
+    return c.notFound()
+  }
+
+  const file = Bun.file(filePath)
   if (await file.exists()) {
     const ext = path.split('.').pop() || ''
     const contentType = getContentType(ext)
@@ -136,7 +144,7 @@ app.use('*', async (c, next) => {
       headers: { 'Content-Type': contentType }
     })
   }
-  
+
   return c.notFound()
 })
 
@@ -162,8 +170,13 @@ function getContentType(ext: string): string {
 
 Bun.serve({
   fetch: app.fetch,
-  hostname: '127.0.0.1',
+  hostname: host,
   port,
 })
 
-console.log(`Server running on http://127.0.0.1:${port}`)
+const publicHost = getPublicHost(host)
+if (publicHost === host) {
+  console.log(`Server running on http://${publicHost}:${port}`)
+} else {
+  console.log(`Server running on http://${publicHost}:${port} (bound to ${host})`)
+}
