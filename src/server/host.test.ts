@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { DEFAULT_HOST, resolveServerHost } from "./host"
+import { DEFAULT_HOST, getPublicHost, resolveServerHost } from "./host"
 
 describe("resolveServerHost", () => {
   it("uses the default host when no override is provided", () => {
@@ -17,5 +17,19 @@ describe("resolveServerHost", () => {
 
   it("ignores empty host values", () => {
     expect(resolveServerHost({ cliHost: "   ", envHost: "" })).toBe(DEFAULT_HOST)
+  })
+})
+
+describe("getPublicHost", () => {
+  it("returns the host unchanged when it is already user-facing", () => {
+    expect(getPublicHost("localhost")).toBe("localhost")
+  })
+
+  it("maps 0.0.0.0 to localhost for startup logs", () => {
+    expect(getPublicHost("0.0.0.0")).toBe("localhost")
+  })
+
+  it("maps :: to localhost for startup logs", () => {
+    expect(getPublicHost("::")).toBe("localhost")
   })
 })

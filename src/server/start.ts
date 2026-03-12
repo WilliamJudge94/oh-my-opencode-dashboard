@@ -7,7 +7,8 @@ import { addOrUpdateSource, listSources } from "../ingest/sources-registry"
 import { getLegacyStorageRootForBackend, selectStorageBackend } from "../ingest/storage-backend"
 import { createApi } from "./api"
 import { createDashboardStore, type DashboardStore } from "./dashboard"
-import { resolveServerHost } from "./host"
+import { getPublicHost, resolveServerHost } from "./host"
+import { resolveStaticFilePath } from "./static-file"
 
 function isBunxInvocation(argv: string[]): boolean {
   if (process.env.BUN_INSTALL_CACHE_DIR) return true
@@ -130,8 +131,12 @@ app.use('*', async (c, next) => {
   }
 
   // For static files with extensions, try to serve them
-  const relativePath = path.startsWith('/') ? path.slice(1) : path
-  const file = Bun.file(join(distRoot, relativePath))
+  const filePath = resolveStaticFilePath(distRoot, path)
+  if (!filePath) {
+    return c.notFound()
+  }
+
+  const file = Bun.file(filePath)
   if (await file.exists()) {
     const ext = path.split('.').pop() || ''
     const contentType = getContentType(ext)
@@ -169,4 +174,9 @@ Bun.serve({
   port,
 })
 
-console.log(`Server running on http://${host}:${port}`)
+const publicHost = getPublicHost(host)
+if (publicHost === host) {
+  console.log(`Server running on http://${publicHost}:${port}`)
+} else {
+  console.log(`Server running on http://${publicHost}:${port} (bound to ${host})`)
+}

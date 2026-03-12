@@ -10,4 +10,8 @@ export function resolveServerHost(opts: { cliHost?: string; envHost?: string }):
   return normalizeHost(opts.cliHost) ?? normalizeHost(opts.envHost) ?? DEFAULT_HOST
 }
 
+export function getPublicHost(host: string): string {
+  return host === "0.0.0.0" || host === "::" ? "localhost" : host
+}
+
 export { DEFAULT_HOST }

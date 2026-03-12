@@ -107,17 +107,25 @@ bun run build
 bun run start -- --project /absolute/path/to/your/project
 ```
 
-Bind to a different host when needed (for example in containers):
+Bind to localhost explicitly:
 
 ```bash
 OMO_DASHBOARD_HOST=localhost bun run start -- --project /absolute/path/to/your/project
 ```
 
+Expose the server outside localhost (for example from a container):
+
+```bash
+OMO_DASHBOARD_HOST=0.0.0.0 bun run start -- --project /absolute/path/to/your/project
+```
+
 Or via CLI:
 
 ```bash
-bun run start -- --project /absolute/path/to/your/project --host localhost
+bun run start -- --project /absolute/path/to/your/project --host 0.0.0.0
 ```
+
+Use `0.0.0.0` only on trusted networks. It binds the server on all interfaces, while `localhost` keeps it local-only.
 
 ## What It Reads (SQLite + Legacy)
 
