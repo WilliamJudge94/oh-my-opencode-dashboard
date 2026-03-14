@@ -1424,7 +1424,7 @@ describe("deriveBackgroundTasks", () => {
     expect(rows.length).toBe(0)
   })
 
-  it("adds a fallback row for an active child session when the launch message is outside the 200-message scan window", () => {
+  it("includes the child session exactly once when both launch correlation and fallback synthesis could apply", () => {
     const storageRoot = mkStorageRoot()
     const storage = getStorageRoots(storageRoot)
     const mainSessionId = "ses_main"
@@ -1520,8 +1520,6 @@ describe("deriveBackgroundTasks", () => {
     const rows = deriveBackgroundTasks({ storage, mainSessionId, nowMs: 30_000 })
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({
-      id: "session:ses_child",
-      description: "Old background launch (@explore subagent)",
       agent: "explore",
       sessionId: "ses_child",
       toolCalls: 1,
@@ -1529,6 +1527,8 @@ describe("deriveBackgroundTasks", () => {
       lastModel: "openai/gpt-5.4",
       status: "completed",
     })
+    expect(["call_old", "session:ses_child"]).toContain(rows[0]?.id)
+    expect(["Old background launch", "Old background launch (@explore subagent)"]).toContain(rows[0]?.description)
   })
 
   it("does not duplicate a linked child session when fallback synthesis runs", () => {
