@@ -11,8 +11,9 @@ function mkTempDir(prefix: string): string {
 
 describe("resolveStaticFilePath", () => {
   it("returns a resolved path for files under dist", () => {
-    const distRoot = path.join("/tmp", "omo-dashboard-dist")
-    expect(resolveStaticFilePath(distRoot, "/assets/app.js")).toBe(path.join(distRoot, "assets", "app.js"))
+    const distRoot = os.tmpdir()
+    const resolvedDistRoot = fs.realpathSync.native(distRoot)
+    expect(resolveStaticFilePath(distRoot, "/assets/app.js")).toBe(path.join(resolvedDistRoot, "assets", "app.js"))
   })
 
   it("rejects parent-directory traversal", () => {
