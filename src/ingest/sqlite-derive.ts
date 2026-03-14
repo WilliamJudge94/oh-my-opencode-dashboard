@@ -27,6 +27,12 @@ const TOKEN_USAGE_MESSAGE_LIMIT = 10_000
 
 type CanonicalAgent = "sisyphus" | "prometheus" | "atlas" | "other"
 
+type BackgroundSessionStats = {
+  toolCalls: number
+  lastTool: string | null
+  lastUpdateAt: number | null
+}
+
 const SERIES_ORDER: Array<Pick<TimeSeriesSeries, "id" | "label" | "tone">> = [
   { id: "overall-main", label: "Overall", tone: "muted" },
   { id: "agent:sisyphus", label: "Sisyphus", tone: "teal" },
@@ -124,6 +130,23 @@ function formatTimeline(startAt: number | null, endAtMs: number): string {
 
 function isTaskTool(toolName: string): boolean {
   return TASK_TOOL_NAMES.has(toolName)
+}
+
+function deriveBackgroundStatus(opts: {
+  sessionId: string | null
+  stats: BackgroundSessionStats
+  nowMs: number
+}): BackgroundTaskRow["status"] {
+  if (!opts.sessionId) return "queued"
+  if (opts.stats.lastUpdateAt && opts.nowMs - opts.stats.lastUpdateAt <= 15_000) return "running"
+  if (opts.stats.toolCalls > 0) return "completed"
+  return "unknown"
+}
+
+function titleToFallbackAgent(title: string): string | null {
+  const match = title.match(/\(@([^\s)]+) subagent\)$/)
+  if (!match?.[1]) return null
+  return clampString(match[1], AGENT_MAX)
 }
 
 function mapToolPartsByMessage(parts: StoredToolPart[]): Map<string, StoredToolPart[]> {
@@ -425,6 +448,36 @@ export function deriveBackgroundTasksSqlite(opts: {
   const backgroundMessageCache = new Map<string, StoredMessageMeta[]>()
   const backgroundPartsCache = new Map<string, Map<string, StoredToolPart[]>>()
 
+  const readBackgroundStats = (sessionId: string): SqliteDeriveResult<BackgroundSessionStats> => {
+    const background = readBackgroundSession(sessionId)
+    if (!background.ok) return background
+
+    let toolCalls = 0
+    let lastTool: string | null = null
+    let lastUpdateAt: number | null = null
+
+    const statsOrdered = [...background.value.metas].sort((a, b) => {
+      const at = a.time?.created ?? 0
+      const bt = b.time?.created ?? 0
+      if (at !== bt) return at - bt
+      return String(a.id).localeCompare(String(b.id))
+    })
+    for (const backgroundMeta of statsOrdered) {
+      const created = backgroundMeta.time?.created
+      if (typeof created === "number") lastUpdateAt = created
+      const backgroundParts = background.value.partsByMessage.get(backgroundMeta.id) ?? []
+      for (const backgroundPart of backgroundParts) {
+        toolCalls += 1
+        lastTool = backgroundPart.tool
+      }
+    }
+
+    return {
+      ok: true,
+      value: { toolCalls, lastTool, lastUpdateAt },
+    }
+  }
+
   const readBackgroundSession = (sessionId: string): SqliteDeriveResult<{ metas: StoredMessageMeta[]; partsByMessage: Map<string, StoredToolPart[]> }> => {
     const existingMetas = backgroundMessageCache.get(sessionId)
     const existingParts = backgroundPartsCache.get(sessionId)
@@ -444,6 +497,7 @@ export function deriveBackgroundTasksSqlite(opts: {
   }
 
   const rows: BackgroundTaskRow[] = []
+  const seenSessionIds = new Set<string>()
   const ordered = [...main.value.metas].sort((a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0))
   for (const meta of ordered) {
     const messageCreatedAt = meta.time?.created ?? null
@@ -525,47 +579,29 @@ export function deriveBackgroundTasksSqlite(opts: {
       const background = backgroundSessionId ? readBackgroundSession(backgroundSessionId) : null
       if (background && !background.ok) return background
       const backgroundMetas = background && background.ok ? background.value.metas : []
-      const backgroundPartsByMessage = background && background.ok ? background.value.partsByMessage : new Map<string, StoredToolPart[]>()
-
-      let toolCalls = 0
-      let lastTool: string | null = null
-      let lastUpdateAt: number | null = null
-
-      const statsOrdered = [...backgroundMetas].sort((a, b) => {
-        const at = a.time?.created ?? 0
-        const bt = b.time?.created ?? 0
-        if (at !== bt) return at - bt
-        return String(a.id).localeCompare(String(b.id))
-      })
-      for (const backgroundMeta of statsOrdered) {
-        const created = backgroundMeta.time?.created
-        if (typeof created === "number") lastUpdateAt = created
-        const backgroundParts = backgroundPartsByMessage.get(backgroundMeta.id) ?? []
-        for (const backgroundPart of backgroundParts) {
-          toolCalls += 1
-          lastTool = backgroundPart.tool
-        }
-      }
+      const stats = backgroundSessionId
+        ? readBackgroundStats(backgroundSessionId)
+        : { ok: true as const, value: { toolCalls: 0, lastTool: null, lastUpdateAt: startedAt } }
+      if (!stats.ok) return stats
 
       const lastModel = backgroundMetas.length > 0 ? pickLatestModelString(backgroundMetas) : null
-      let status: BackgroundTaskRow["status"] = "unknown"
-      if (!backgroundSessionId) {
-        status = "queued"
-      } else if (lastUpdateAt && nowMs - lastUpdateAt <= 15_000) {
-        status = "running"
-      } else if (toolCalls > 0) {
-        status = "completed"
-      }
+      const status = deriveBackgroundStatus({
+        sessionId: backgroundSessionId,
+        stats: stats.value,
+        nowMs,
+      })
 
-      const timelineEndMs = status === "completed" ? (lastUpdateAt ?? nowMs) : nowMs
+      const timelineEndMs = status === "completed" ? (stats.value.lastUpdateAt ?? nowMs) : nowMs
+
+      if (backgroundSessionId) seenSessionIds.add(backgroundSessionId)
 
       rows.push({
         id: part.callID,
         description,
         agent,
         status,
-        toolCalls: backgroundSessionId ? toolCalls : null,
-        lastTool,
+        toolCalls: backgroundSessionId ? stats.value.toolCalls : null,
+        lastTool: stats.value.lastTool,
         lastModel,
         timeline: status === "unknown" ? "" : formatTimeline(startedAt, timelineEndMs),
         sessionId: backgroundSessionId,
@@ -573,6 +609,59 @@ export function deriveBackgroundTasksSqlite(opts: {
     }
 
     if (rows.length >= 50) break
+  }
+
+  const childSessions = allSessionMetas
+    .filter((meta) => meta.parentID === opts.mainSessionId)
+    .sort((a, b) => {
+      const at = a.time?.updated ?? 0
+      const bt = b.time?.updated ?? 0
+      if (bt !== at) return bt - at
+      return String(a.id).localeCompare(String(b.id))
+    })
+
+  for (const child of childSessions) {
+    if (rows.length >= 50) break
+    if (seenSessionIds.has(child.id)) continue
+
+    const background = readBackgroundSession(child.id)
+    if (!background.ok) return background
+    const stats = readBackgroundStats(child.id)
+    if (!stats.ok) return stats
+
+    const status = deriveBackgroundStatus({
+      sessionId: child.id,
+      stats: stats.value,
+      nowMs,
+    })
+    if (status === "unknown" && stats.value.toolCalls <= 0) continue
+
+    const startAt = child.time?.created ?? null
+    const timelineEndMs = status === "completed" ? (stats.value.lastUpdateAt ?? nowMs) : nowMs
+    const title = typeof child.title === "string" ? child.title : ""
+    const description = (
+      clampString(stripSessionTitlePrefix(title), DESCRIPTION_MAX) ??
+      clampString(title, DESCRIPTION_MAX) ??
+      "Task"
+    )
+    const agent = (
+      titleToFallbackAgent(title) ??
+      clampString(background.value.metas[0]?.agent, AGENT_MAX) ??
+      "unknown"
+    )
+
+    seenSessionIds.add(child.id)
+    rows.push({
+      id: `session:${child.id}`,
+      description,
+      agent,
+      status,
+      toolCalls: stats.value.toolCalls,
+      lastTool: stats.value.lastTool,
+      lastModel: background.value.metas.length > 0 ? pickLatestModelString(background.value.metas) : null,
+      timeline: status === "unknown" ? "" : formatTimeline(startAt, timelineEndMs),
+      sessionId: child.id,
+    })
   }
 
   return { ok: true, value: rows }

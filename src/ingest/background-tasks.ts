@@ -18,6 +18,12 @@ export type BackgroundTaskRow = {
   sessionId: string | null
 }
 
+type BackgroundSessionStats = {
+  toolCalls: number
+  lastTool: string | null
+  lastUpdateAt: number | null
+}
+
 const DESCRIPTION_MAX = 120
 const AGENT_MAX = 30
 const SESSION_ID_MAX = 200
@@ -282,7 +288,7 @@ function deriveBackgroundSessionStats(
   storage: OpenCodeStorageRoots,
   metas: StoredMessageMeta[],
   fsLike: FsLike
-): { toolCalls: number; lastTool: string | null; lastUpdateAt: number | null } {
+): BackgroundSessionStats {
   let toolCalls = 0
   let lastTool: string | null = null
   let lastUpdateAt: number | null = null
@@ -341,6 +347,23 @@ function isTaskTool(toolName: string): boolean {
   return TASK_TOOL_NAMES.has(toolName)
 }
 
+function deriveBackgroundStatus(opts: {
+  sessionId: string | null
+  stats: BackgroundSessionStats
+  nowMs: number
+}): BackgroundTaskRow["status"] {
+  if (!opts.sessionId) return "queued"
+  if (opts.stats.lastUpdateAt && opts.nowMs - opts.stats.lastUpdateAt <= 15_000) return "running"
+  if (opts.stats.toolCalls > 0) return "completed"
+  return "unknown"
+}
+
+function titleToFallbackAgent(title: string): string | null {
+  const match = title.match(/\(@([^\s)]+) subagent\)$/)
+  if (!match?.[1]) return null
+  return clampString(match[1], AGENT_MAX)
+}
+
 export function deriveBackgroundTasks(opts: {
   storage: OpenCodeStorageRoots
   mainSessionId: string
@@ -384,6 +407,7 @@ export function deriveBackgroundTasks(opts: {
   }
 
   const rows: BackgroundTaskRow[] = []
+  const seenSessionIds = new Set<string>()
 
   // Iterate newest-first to cap list and keep latest tasks.
   const ordered = [...metas].sort((a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0))
@@ -486,17 +510,15 @@ export function deriveBackgroundTasks(opts: {
         : { toolCalls: 0, lastTool: null, lastUpdateAt: startedAt }
       const lastModel = backgroundSessionId ? readBackgroundModel(backgroundSessionId) : null
 
-      // Best-effort status: if background session exists and has any tool calls, treat as running unless idle.
-      let status: BackgroundTaskRow["status"] = "unknown"
-      if (!backgroundSessionId) {
-        status = "queued"
-      } else if (stats.lastUpdateAt && nowMs - stats.lastUpdateAt <= 15_000) {
-        status = "running"
-      } else if (stats.toolCalls > 0) {
-        status = "completed"
-      }
+      const status = deriveBackgroundStatus({
+        sessionId: backgroundSessionId,
+        stats,
+        nowMs,
+      })
 
       const timelineEndMs = status === "completed" ? (stats.lastUpdateAt ?? nowMs) : nowMs
+
+      if (backgroundSessionId) seenSessionIds.add(backgroundSessionId)
 
       rows.push({
         id: part.callID,
@@ -512,6 +534,55 @@ export function deriveBackgroundTasks(opts: {
     }
 
     if (rows.length >= 50) break
+  }
+
+  const childSessions = allSessionMetas
+    .filter((m) => m.parentID === opts.mainSessionId)
+    .sort((a, b) => {
+      const at = a.time?.updated ?? 0
+      const bt = b.time?.updated ?? 0
+      if (bt !== at) return bt - at
+      return String(a.id).localeCompare(String(b.id))
+    })
+
+  for (const child of childSessions) {
+    if (rows.length >= 50) break
+    if (seenSessionIds.has(child.id)) continue
+
+    const stats = readBackgroundStats(child.id)
+    const status = deriveBackgroundStatus({
+      sessionId: child.id,
+      stats,
+      nowMs,
+    })
+    if (status === "unknown" && stats.toolCalls <= 0) continue
+
+    const startAt = child.time?.created ?? null
+    const timelineEndMs = status === "completed" ? (stats.lastUpdateAt ?? nowMs) : nowMs
+    const title = typeof child.title === "string" ? child.title : ""
+    const description = (
+      clampString(stripSessionTitlePrefix(title), DESCRIPTION_MAX) ??
+      clampString(title, DESCRIPTION_MAX) ??
+      "Task"
+    )
+    const agent = (
+      titleToFallbackAgent(title) ??
+      clampString(readBackgroundMetas(child.id)[0]?.agent, AGENT_MAX) ??
+      "unknown"
+    )
+
+    seenSessionIds.add(child.id)
+    rows.push({
+      id: `session:${child.id}`,
+      description,
+      agent,
+      status,
+      toolCalls: stats.toolCalls,
+      lastTool: stats.lastTool,
+      lastModel: readBackgroundModel(child.id),
+      timeline: status === "unknown" ? "" : formatTimeline(startAt, timelineEndMs),
+      sessionId: child.id,
+    })
   }
 
   return rows

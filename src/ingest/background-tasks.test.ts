@@ -1423,4 +1423,204 @@ describe("deriveBackgroundTasks", () => {
     const rows = deriveBackgroundTasks({ storage, mainSessionId })
     expect(rows.length).toBe(0)
   })
+
+  it("adds a fallback row for an active child session when the launch message is outside the 200-message scan window", () => {
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const mainSessionId = "ses_main"
+    const projectID = "proj"
+
+    const msgDir = path.join(storage.message, mainSessionId)
+    fs.mkdirSync(msgDir, { recursive: true })
+
+    for (let i = 0; i < 205; i++) {
+      const messageID = `msg_${String(i).padStart(3, "0")}`
+      fs.writeFileSync(
+        path.join(msgDir, `${messageID}.json`),
+        JSON.stringify({
+          id: messageID,
+          sessionID: mainSessionId,
+          role: "assistant",
+          time: { created: i + 1 },
+        }),
+        "utf8"
+      )
+    }
+
+    const oldPartDir = path.join(storage.part, "msg_000")
+    fs.mkdirSync(oldPartDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(oldPartDir, "part_old.json"),
+      JSON.stringify({
+        id: "part_old",
+        sessionID: mainSessionId,
+        messageID: "msg_000",
+        type: "tool",
+        callID: "call_old",
+        tool: "delegate_task",
+        state: {
+          status: "completed",
+          input: {
+            run_in_background: true,
+            description: "Old background launch",
+            subagent_type: "explore",
+          },
+        },
+      }),
+      "utf8"
+    )
+
+    const sessDir = path.join(storage.session, projectID)
+    fs.mkdirSync(sessDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(sessDir, "ses_child.json"),
+      JSON.stringify({
+        id: "ses_child",
+        projectID,
+        directory: "/tmp/project",
+        title: "Old background launch (@explore subagent)",
+        parentID: mainSessionId,
+        time: { created: 50, updated: 1000 },
+      }),
+      "utf8"
+    )
+
+    const childMsgDir = path.join(storage.message, "ses_child")
+    fs.mkdirSync(childMsgDir, { recursive: true })
+    const childMsgId = "msg_child"
+    fs.writeFileSync(
+      path.join(childMsgDir, `${childMsgId}.json`),
+      JSON.stringify({
+        id: childMsgId,
+        sessionID: "ses_child",
+        role: "assistant",
+        agent: "explore",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        time: { created: 990 },
+      }),
+      "utf8"
+    )
+    const childPartDir = path.join(storage.part, childMsgId)
+    fs.mkdirSync(childPartDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(childPartDir, "part_1.json"),
+      JSON.stringify({
+        id: "part_1",
+        sessionID: "ses_child",
+        messageID: childMsgId,
+        type: "tool",
+        callID: "call_bg",
+        tool: "grep",
+        state: { status: "completed", input: {} },
+      }),
+      "utf8"
+    )
+
+    const rows = deriveBackgroundTasks({ storage, mainSessionId, nowMs: 30_000 })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      id: "session:ses_child",
+      description: "Old background launch (@explore subagent)",
+      agent: "explore",
+      sessionId: "ses_child",
+      toolCalls: 1,
+      lastTool: "grep",
+      lastModel: "openai/gpt-5.4",
+      status: "completed",
+    })
+  })
+
+  it("does not duplicate a linked child session when fallback synthesis runs", () => {
+    const storageRoot = mkStorageRoot()
+    const storage = getStorageRoots(storageRoot)
+    const mainSessionId = "ses_main"
+    const projectID = "proj"
+
+    const msgDir = path.join(storage.message, mainSessionId)
+    fs.mkdirSync(msgDir, { recursive: true })
+    const messageID = "msg_1"
+    fs.writeFileSync(
+      path.join(msgDir, `${messageID}.json`),
+      JSON.stringify({
+        id: messageID,
+        sessionID: mainSessionId,
+        role: "assistant",
+        time: { created: 1000 },
+      }),
+      "utf8"
+    )
+
+    const partDir = path.join(storage.part, messageID)
+    fs.mkdirSync(partDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(partDir, "part_1.json"),
+      JSON.stringify({
+        id: "part_1",
+        sessionID: mainSessionId,
+        messageID,
+        type: "tool",
+        callID: "call_1",
+        tool: "delegate_task",
+        state: {
+          status: "completed",
+          input: {
+            run_in_background: true,
+            description: "Linked task",
+            subagent_type: "explore",
+          },
+        },
+      }),
+      "utf8"
+    )
+
+    const sessDir = path.join(storage.session, projectID)
+    fs.mkdirSync(sessDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(sessDir, "ses_child.json"),
+      JSON.stringify({
+        id: "ses_child",
+        projectID,
+        directory: "/tmp/project",
+        title: "Linked task (@explore subagent)",
+        parentID: mainSessionId,
+        time: { created: 1100, updated: 1100 },
+      }),
+      "utf8"
+    )
+
+    const childMsgDir = path.join(storage.message, "ses_child")
+    fs.mkdirSync(childMsgDir, { recursive: true })
+    const childMsgId = "msg_child"
+    fs.writeFileSync(
+      path.join(childMsgDir, `${childMsgId}.json`),
+      JSON.stringify({
+        id: childMsgId,
+        sessionID: "ses_child",
+        role: "assistant",
+        time: { created: 1200 },
+      }),
+      "utf8"
+    )
+    const childPartDir = path.join(storage.part, childMsgId)
+    fs.mkdirSync(childPartDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(childPartDir, "part_1.json"),
+      JSON.stringify({
+        id: "part_1",
+        sessionID: "ses_child",
+        messageID: childMsgId,
+        type: "tool",
+        callID: "call_bg",
+        tool: "read",
+        state: { status: "completed", input: {} },
+      }),
+      "utf8"
+    )
+
+    const rows = deriveBackgroundTasks({ storage, mainSessionId, nowMs: 30_000 })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.id).toBe("call_1")
+    expect(rows[0]?.sessionId).toBe("ses_child")
+  })
 })

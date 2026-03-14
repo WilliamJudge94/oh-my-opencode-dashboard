@@ -422,4 +422,133 @@ describe("sqlite derive helpers", () => {
     if (!result.ok) return
     expect(result.value).toBe("ses_boulder")
   })
+
+  it("deriveBackgroundTasksSqlite adds a fallback row when the launch message is outside the 200-message scan window", () => {
+    const sqlitePath = mkSqliteDb()
+    const db = new BunDatabase(sqlitePath)
+    insertSession(db, { id: "ses_main", directory: "/repo", created: 0, updated: 500 })
+
+    for (let i = 0; i < 205; i++) {
+      insertMessage(db, {
+        id: `msg_${String(i).padStart(3, "0")}`,
+        sessionId: "ses_main",
+        created: i + 1,
+      })
+    }
+    insertToolPart(db, {
+      id: "part_old",
+      messageId: "msg_000",
+      sessionId: "ses_main",
+      callID: "call_old",
+      tool: "delegate_task",
+      status: "completed",
+      input: {
+        run_in_background: true,
+        description: "Old sqlite background launch",
+        subagent_type: "explore",
+      },
+      created: 1,
+      startTime: 1,
+    })
+
+    insertSession(db, {
+      id: "ses_child",
+      directory: "/repo",
+      parentID: "ses_main",
+      title: "Old sqlite background launch (@explore subagent)",
+      created: 50,
+      updated: 1000,
+    })
+    insertMessage(db, {
+      id: "msg_child",
+      sessionId: "ses_child",
+      created: 990,
+      agent: "explore",
+      providerID: "openai",
+      modelID: "gpt-5.4",
+    })
+    insertToolPart(db, {
+      id: "part_child",
+      messageId: "msg_child",
+      sessionId: "ses_child",
+      callID: "call_child",
+      tool: "grep",
+      status: "completed",
+      created: 990,
+    })
+    db.close()
+
+    const result = deriveBackgroundTasksSqlite({
+      sqlitePath,
+      mainSessionId: "ses_main",
+      nowMs: 30_000,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value).toHaveLength(1)
+    expect(result.value[0]).toMatchObject({
+      id: "session:ses_child",
+      description: "Old sqlite background launch (@explore subagent)",
+      agent: "explore",
+      sessionId: "ses_child",
+      toolCalls: 1,
+      lastTool: "grep",
+      lastModel: "openai/gpt-5.4",
+      status: "completed",
+    })
+  })
+
+  it("deriveBackgroundTasksSqlite does not duplicate a linked child session when fallback synthesis runs", () => {
+    const sqlitePath = mkSqliteDb()
+    const db = new BunDatabase(sqlitePath)
+    insertSession(db, { id: "ses_main", directory: "/repo", created: 0, updated: 500 })
+    insertMessage(db, { id: "msg_main", sessionId: "ses_main", created: 1000 })
+    insertToolPart(db, {
+      id: "part_main",
+      messageId: "msg_main",
+      sessionId: "ses_main",
+      callID: "call_main",
+      tool: "delegate_task",
+      status: "completed",
+      input: {
+        run_in_background: true,
+        description: "Linked sqlite task",
+        subagent_type: "explore",
+      },
+      created: 1000,
+      startTime: 1000,
+    })
+    insertSession(db, {
+      id: "ses_child",
+      directory: "/repo",
+      parentID: "ses_main",
+      title: "Linked sqlite task (@explore subagent)",
+      created: 1100,
+      updated: 1100,
+    })
+    insertMessage(db, { id: "msg_child", sessionId: "ses_child", created: 1200 })
+    insertToolPart(db, {
+      id: "part_child",
+      messageId: "msg_child",
+      sessionId: "ses_child",
+      callID: "call_child",
+      tool: "read",
+      status: "completed",
+      created: 1200,
+    })
+    db.close()
+
+    const result = deriveBackgroundTasksSqlite({
+      sqlitePath,
+      mainSessionId: "ses_main",
+      nowMs: 30_000,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value).toHaveLength(1)
+    expect(result.value[0]).toMatchObject({
+      id: "call_main",
+      sessionId: "ses_child",
+    })
+  })
 })
